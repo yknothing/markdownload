@@ -42,7 +42,7 @@ It uses the following libraries:
 The Common Mark icon courtesy of https://github.com/dcurtis/markdown-mark
 
 ## Pricing
-This is an open-source extension I made *for fun*. It's intention is to be completely free.
+This is an open-source extension I made *for fun*. Its intention is to be completely free.
 It's free on Firefox, Edge and Chrome (and other Chromium browsers),
 but unfortunately for Safari there is a yearly developer fee, so I've decided to
 charge a small price for the Safari version to help cover that cost.
