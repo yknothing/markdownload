@@ -955,7 +955,7 @@ async function copyMarkdownFromContext(info, tab) {
     }
     else if(info.menuItemId == "copy-markdown-obsidian") {
       const article = await getArticleFromContent(tab.id, info.menuItemId == "copy-markdown-obsidian");
-      const title = article.title;
+      const title = await formatTitle(article);
       const options = await getOptions();
       const obsidianVault = options.obsidianVault;
       const obsidianFolder = await formatObsidianFolder(article);
