@@ -23,7 +23,22 @@ The extension is available for [Firefox](https://addons.mozilla.org/en-GB/firefo
 # Obsidian Integration
 
 For integration with obsidian, you need to install and enable community plugins named "Advanced Obsidian URI". This plugin help us to bypass character limitation in URL. Because it's using clipboard as the source for creating new file.
-More information:  https://vinzent03.github.io/obsidian-advanced-uri/
+More information about Advanced Obsidian URI plugin:  https://vinzent03.github.io/obsidian-advanced-uri/
+
+You need to do some configurations in order to use this integration.
+<details>
+  <summary>Steps to follow</summary>
+  
+  1. Left-Click on the extension
+  2. Click on the gear icon to open the configuration menu  
+  3. Scroll down to "Obsidian integration" section and turn "enable obsidian integration" on.
+  4. Fill out the form below (Obsidian vault name and Obsidian folder name.)
+  5. Right-click on the extension and open the menu
+  6. In "MarkDownload - Markdown Web Clipper", select "Send Tab to Obsidian"
+
+</details>
+
+
 
 # External Libraries
 It uses the following libraries:
