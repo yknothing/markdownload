@@ -746,6 +746,12 @@ async function getArticleFromDom(domString) {
     header.outerHTML = header.outerHTML;  
   });
 
+  // Prevent Readability from removing the <html> element if has a 'class' attribute
+  // which matches removal criteria.
+  // Note: The document element is guaranteed to be the HTML tag because the 'text/html'
+  // mime type was used when the DOM was created.
+  dom.documentElement.removeAttribute('class')
+
   // simplify the dom into an article
   const article = new Readability(dom).parse();
 
