@@ -6,27 +6,31 @@ function notifyExtension() {
 function getHTMLOfDocument() {
     // if the document doesn't have a "base" element make one
     // this allows the DOM parser in future steps to fix relative uris
-    let baseEl = document.createElement('base');
 
-    // check for a existing base elements
     let baseEls = document.head.getElementsByTagName('base');
+    let baseEl;
+
     if (baseEls.length > 0) {
         baseEl = baseEls[0];
-    }
-    // if we don't find one, append this new one.
-    else {
+    } else {
+        baseEl = document.createElement('base');
         document.head.append(baseEl);
     }
 
-    // if the base element doesn't have a href, use the current location
-    if (!baseEl.getAttribute('href')) {
+    // make sure the 'base' element always has a good 'href`
+    // attribute so that the DOMParser generates usable
+    // baseURI and documentURI properties when used in the
+    // background context.
+
+    let href = baseEl.getAttribute('href');
+
+    if (!href || !href.startsWith(window.location.origin)) {
         baseEl.setAttribute('href', window.location.href);
     }
-    
-    // remove the hidden content from the page
 
+    // remove the hidden content from the page
     removeHiddenNodes(document.body);
-    
+
     // get the content of the page as a string
     return document.documentElement.outerHTML;
 }
@@ -56,7 +60,6 @@ function removeHiddenNodes(root) {
     }
     return root
   }
-  
 
 // code taken from here: https://stackoverflow.com/a/5084044/304786
 function getHTMLOfSelection() {
