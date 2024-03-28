@@ -4,6 +4,14 @@ function notifyExtension() {
 }
 
 function getHTMLOfDocument() {
+    // make sure a title tag exists so that pageTitle os not empty
+    if (!document.title) {
+        let titleEl = document.createElement('title');
+        document.head.append(titleEl);
+        // prepate the default text
+        titleEl.innerText = window.location.hostname + "╱"+ window.location.pathname.replace('/','╱')
+    }
+
     // if the document doesn't have a "base" element make one
     // this allows the DOM parser in future steps to fix relative uris
     let baseEl = document.createElement('base');
