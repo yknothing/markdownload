@@ -1,7 +1,7 @@
 var TurndownService = (function () {
   'use strict';
 
-  function extend(destination) {
+  function extend (destination) {
     for (var i = 1; i < arguments.length; i++) {
       var source = arguments[i];
       for (var key in source) {
@@ -11,15 +11,15 @@ var TurndownService = (function () {
     return destination
   }
 
-  function repeat(character, count) {
+  function repeat (character, count) {
     return Array(count + 1).join(character)
   }
 
-  function trimLeadingNewlines(string) {
+  function trimLeadingNewlines (string) {
     return string.replace(/^\n*/, '')
   }
 
-  function trimTrailingNewlines(string) {
+  function trimTrailingNewlines (string) {
     // avoid match-at-end regexp bottleneck, see #370
     var indexEnd = string.length;
     while (indexEnd > 0 && string[indexEnd - 1] === '\n') indexEnd--;
@@ -35,7 +35,7 @@ var TurndownService = (function () {
     'TFOOT', 'TH', 'THEAD', 'TR', 'UL'
   ];
 
-  function isBlock(node) {
+  function isBlock (node) {
     return is(node, blockElements)
   }
 
@@ -44,11 +44,11 @@ var TurndownService = (function () {
     'KEYGEN', 'LINK', 'META', 'PARAM', 'SOURCE', 'TRACK', 'WBR'
   ];
 
-  function isVoid(node) {
+  function isVoid (node) {
     return is(node, voidElements)
   }
 
-  function hasVoid(node) {
+  function hasVoid (node) {
     return has(node, voidElements)
   }
 
@@ -57,19 +57,19 @@ var TurndownService = (function () {
     'AUDIO', 'VIDEO'
   ];
 
-  function isMeaningfulWhenBlank(node) {
+  function isMeaningfulWhenBlank (node) {
     return is(node, meaningfulWhenBlankElements)
   }
 
-  function hasMeaningfulWhenBlank(node) {
+  function hasMeaningfulWhenBlank (node) {
     return has(node, meaningfulWhenBlankElements)
   }
 
-  function is(node, tagNames) {
+  function is (node, tagNames) {
     return tagNames.indexOf(node.nodeName) >= 0
   }
 
-  function has(node, tagNames) {
+  function has (node, tagNames) {
     return (
       node.getElementsByTagName &&
       tagNames.some(function (tagName) {
@@ -335,7 +335,7 @@ var TurndownService = (function () {
     }
   };
 
-  function cleanAttribute(attribute) {
+  function cleanAttribute (attribute) {
     return attribute ? attribute.replace(/(\n+\s*)+/g, '\n') : ''
   }
 
@@ -343,7 +343,7 @@ var TurndownService = (function () {
    * Manages a collection of rules used to convert HTML to Markdown
    */
 
-  function Rules(options) {
+  function Rules (options) {
     this.options = options;
     this._keep = [];
     this._remove = [];
@@ -399,7 +399,7 @@ var TurndownService = (function () {
     }
   };
 
-  function findRule(rules, node, options) {
+  function findRule (rules, node, options) {
     for (var i = 0; i < rules.length; i++) {
       var rule = rules[i];
       if (filterValue(rule, node, options)) return rule
@@ -407,7 +407,7 @@ var TurndownService = (function () {
     return void 0
   }
 
-  function filterValue(rule, node, options) {
+  function filterValue (rule, node, options) {
     var filter = rule.filter;
     if (typeof filter === 'string') {
       if (filter === node.nodeName.toLowerCase()) return true
@@ -452,7 +452,7 @@ var TurndownService = (function () {
    *
    * @param {Object} options
    */
-  function collapseWhitespace(options) {
+  function collapseWhitespace (options) {
     var element = options.element;
     var isBlock = options.isBlock;
     var isVoid = options.isVoid;
@@ -473,7 +473,7 @@ var TurndownService = (function () {
         var text = node.data.replace(/[ \r\n\t]+/g, ' ');
 
         if ((!prevText || / $/.test(prevText.data)) &&
-          !keepLeadingWs && text[0] === ' ') {
+            !keepLeadingWs && text[0] === ' ') {
           text = text.substr(1);
         }
 
@@ -527,7 +527,7 @@ var TurndownService = (function () {
    * @param {Node} node
    * @return {Node} node
    */
-  function remove(node) {
+  function remove (node) {
     var next = node.nextSibling || node.parentNode;
 
     node.parentNode.removeChild(node);
@@ -544,7 +544,7 @@ var TurndownService = (function () {
    * @param {Function} isPre
    * @return {Node}
    */
-  function next(prev, current, isPre) {
+  function next (prev, current, isPre) {
     if ((prev && prev.parentNode === current) || isPre(current)) {
       return current.nextSibling || current.parentNode
     }
@@ -562,7 +562,7 @@ var TurndownService = (function () {
    * Parsing HTML strings
    */
 
-  function canParseHTMLNatively() {
+  function canParseHTMLNatively () {
     var Parser = root.DOMParser;
     var canParse = false;
 
@@ -573,13 +573,13 @@ var TurndownService = (function () {
       if (new Parser().parseFromString('', 'text/html')) {
         canParse = true;
       }
-    } catch (e) { }
+    } catch (e) {}
 
     return canParse
   }
 
-  function createHTMLParser() {
-    var Parser = function () { };
+  function createHTMLParser () {
+    var Parser = function () {};
 
     {
       if (shouldUseActiveX()) {
@@ -604,19 +604,19 @@ var TurndownService = (function () {
     return Parser
   }
 
-  function shouldUseActiveX() {
+  function shouldUseActiveX () {
     var useActiveX = false;
     try {
       document.implementation.createHTMLDocument('').open();
     } catch (e) {
-      if (window.ActiveXObject) useActiveX = true;
+      if (root.ActiveXObject) useActiveX = true;
     }
     return useActiveX
   }
 
   var HTMLParser = canParseHTMLNatively() ? root.DOMParser : createHTMLParser();
 
-  function RootNode(input, options) {
+  function RootNode (input, options) {
     var root;
     if (typeof input === 'string') {
       var doc = htmlParser().parseFromString(
@@ -641,16 +641,16 @@ var TurndownService = (function () {
   }
 
   var _htmlParser;
-  function htmlParser() {
+  function htmlParser () {
     _htmlParser = _htmlParser || new HTMLParser();
     return _htmlParser
   }
 
-  function isPreOrCode(node) {
+  function isPreOrCode (node) {
     return node.nodeName === 'PRE' || node.nodeName === 'CODE'
   }
 
-  function Node(node, options) {
+  function Node (node, options) {
     node.isBlock = isBlock(node);
     node.isCode = node.nodeName === 'CODE' || node.parentNode.isCode;
     node.isBlank = isBlank(node);
@@ -658,7 +658,7 @@ var TurndownService = (function () {
     return node
   }
 
-  function isBlank(node) {
+  function isBlank (node) {
     return (
       !isVoid(node) &&
       !isMeaningfulWhenBlank(node) &&
@@ -668,7 +668,7 @@ var TurndownService = (function () {
     )
   }
 
-  function flankingWhitespace(node, options) {
+  function flankingWhitespace (node, options) {
     if (node.isBlock || (options.preformattedCode && node.isCode)) {
       return { leading: '', trailing: '' }
     }
@@ -688,8 +688,8 @@ var TurndownService = (function () {
     return { leading: edges.leading, trailing: edges.trailing }
   }
 
-  function edgeWhitespace(string) {
-    var m = string.match(/^(([ \t\r\n]*)(\s*))[\s\S]*?((\s*?)([ \t\r\n]*))$/);
+  function edgeWhitespace (string) {
+    var m = string.match(/^(([ \t\r\n]*)(\s*))(?:(?=\S)[\s\S]*\S)?((\s*?)([ \t\r\n]*))$/);
     return {
       leading: m[1], // whole string for whitespace-only strings
       leadingAscii: m[2],
@@ -700,7 +700,7 @@ var TurndownService = (function () {
     }
   }
 
-  function isFlankedByWhitespace(side, node, options) {
+  function isFlankedByWhitespace (side, node, options) {
     var sibling;
     var regExp;
     var isFlanked;
@@ -742,7 +742,7 @@ var TurndownService = (function () {
     [/^(\d+)\. /g, '$1\\. ']
   ];
 
-  function TurndownService(options) {
+  function TurndownService (options) {
     if (!(this instanceof TurndownService)) return new TurndownService(options)
 
     var defaults = {
@@ -876,7 +876,7 @@ var TurndownService = (function () {
    * @type String
    */
 
-  function process(parentNode) {
+  function process (parentNode) {
     var self = this;
     return reduce.call(parentNode.childNodes, function (output, node) {
       node = new Node(node, self.options);
@@ -900,7 +900,7 @@ var TurndownService = (function () {
    * @type String
    */
 
-  function postProcess(output) {
+  function postProcess (output) {
     var self = this;
     this.rules.forEach(function (rule) {
       if (typeof rule.append === 'function') {
@@ -919,7 +919,7 @@ var TurndownService = (function () {
    * @type String
    */
 
-  function replacementForNode(node) {
+  function replacementForNode (node) {
     var rule = this.rules.forNode(node);
     var content = process.call(this, node);
     var whitespace = node.flankingWhitespace;
@@ -940,7 +940,7 @@ var TurndownService = (function () {
    * @type String
    */
 
-  function join(output, replacement) {
+  function join (output, replacement) {
     var s1 = trimTrailingNewlines(output);
     var s2 = trimLeadingNewlines(replacement);
     var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -957,7 +957,7 @@ var TurndownService = (function () {
    * @type String|Object|Array|Boolean|Number
    */
 
-  function canConvert(input) {
+  function canConvert (input) {
     return (
       input != null && (
         typeof input === 'string' ||
