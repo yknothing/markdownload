@@ -150,11 +150,7 @@ function turndown(content, options, article) {
     var code;
 
     if (language) {
-      var div = document.createElement('div');
-      document.body.appendChild(div);
-      div.appendChild(node);
       code = node.innerText;
-      div.remove();
     } else {
       code = node.innerHTML;
     }
@@ -206,7 +202,7 @@ function turndown(content, options, article) {
 
   // strip out non-printing special characters which CodeMirror displays as a red dot
   // see: https://codemirror.net/doc/manual.html#option_specialChars
-  markdown = markdown.replace(/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, '');
+  markdown = markdown.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, '');
   
   return { markdown: markdown, imageList: imageList };
 }
