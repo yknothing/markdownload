@@ -185,7 +185,11 @@ function turndown(content, options, article) {
 
   // handle <pre> as code blocks
   turndownService.addRule('pre', {
-    filter: (node, tdopts) => node.nodeName == 'PRE' && (!node.firstChild || node.firstChild.nodeName != 'CODE'),
+    filter: (node, tdopts) => {
+      return node.nodeName == 'PRE'
+             && (!node.firstChild || node.firstChild.nodeName != 'CODE')
+             && !node.querySelector('img');
+    },
     replacement: (content, node, tdopts) => {
       return convertToFencedCodeBlock(node, tdopts);
     }
