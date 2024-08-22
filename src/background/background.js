@@ -352,6 +352,10 @@ function generateValidFileName(title, disallowedChars = null) {
   // and non-breaking spaces (thanks @Licat)
   var name = title.replace(illegalRe, "").replace(new RegExp('\u00A0', 'g'), ' ');
   
+  var name = title.replace(illegalRe, "").replace(new RegExp('\u00A0', 'g'), ' ')
+      // remove leading/trailing whitespace that can cause issues when using {pageTitle} in a download path
+      .trim();
+
   if (disallowedChars) {
     for (let c of disallowedChars) {
       if (`[\\^$.|?*+()`.includes(c)) c = `\\${c}`;
