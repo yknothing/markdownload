@@ -350,9 +350,9 @@ function generateValidFileName(title, disallowedChars = null) {
   // remove < > : " / \ | ? * 
   var illegalRe = /[\/\?<>\\:\*\|":]/g;
   // and non-breaking spaces (thanks @Licat)
-  var name = title.replace(illegalRe, "").replace(new RegExp('\u00A0', 'g'), ' ');
-  
   var name = title.replace(illegalRe, "").replace(new RegExp('\u00A0', 'g'), ' ')
+      // collapse extra whitespace
+      .replace(new RegExp(/\s+/, 'g'), ' ')
       // remove leading/trailing whitespace that can cause issues when using {pageTitle} in a download path
       .trim();
 
@@ -457,7 +457,7 @@ async function downloadMarkdown(markdown, title, tabId, imageList = {}, mdClipsF
       // download images (if enabled)
       if (options.downloadImages) {
         // get the relative path of the markdown file (if any) for image path
-        const destPath = mdClipsFolder + title.substring(0, title.lastIndexOf('/'));
+        let destPath = mdClipsFolder + title.substring(0, title.lastIndexOf('/'));
         if(destPath && !destPath.endsWith('/')) destPath += '/';
         Object.entries(imageList).forEach(async ([src, filename]) => {
           // start the download of the image
