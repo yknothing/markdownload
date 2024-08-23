@@ -1,4 +1,10 @@
 # Changelog
+## 3.3.1
+- Added additional template casing variables that retain original letter casing. For example, for an article titled "Different Types of Casing - Source"::
+    - `{pageTitle:mixed-kebab}` — "Different-Types-of-Casing---Source"
+    - `{pageTitle:mixed_snake}` — "Different_Types_of_Casing_-_Source"
+    - `{pageTitle:obsidian-cal}` — "Different-Types-of-Casing-Source" This option is for additional compatibility with the Obsidian Consistent Attachment Location plugin.
+
 ## 3.3.0
 - Remove hidden content before exporting (thanks @nhaouari !). This allows you to use a different extension (e.g. Adblock) to hide elements that would otherwise clutter up your export
 - Fixes for Obsidian integration in Safari (thanks @aancw !)
