@@ -147,30 +147,20 @@ function turndown(content, options, article) {
     const langMatch = node.id?.match(/code-lang-(.+)/);
     const language = langMatch?.length > 0 ? langMatch[1] : '';
 
-    var code;
+    const code = node.innerText;
 
-    if (language) {
-      var div = document.createElement('div');
-      document.body.appendChild(div);
-      div.appendChild(node);
-      code = node.innerText;
-      div.remove();
-    } else {
-      code = node.innerHTML;
-    }
+    const fenceChar = options.fence.charAt(0);
+    let fenceSize = 3;
+    const fenceInCodeRegex = new RegExp('^' + fenceChar + '{3,}', 'gm');
 
-    var fenceChar = options.fence.charAt(0);
-    var fenceSize = 3;
-    var fenceInCodeRegex = new RegExp('^' + fenceChar + '{3,}', 'gm');
-
-    var match;
+    let match;
     while ((match = fenceInCodeRegex.exec(code))) {
       if (match[0].length >= fenceSize) {
         fenceSize = match[0].length + 1;
       }
     }
 
-    var fence = repeat(fenceChar, fenceSize);
+    const fence = repeat(fenceChar, fenceSize);
 
     return (
       '\n\n' + fence + language + '\n' +
@@ -195,7 +185,11 @@ function turndown(content, options, article) {
 
   // handle <pre> as code blocks
   turndownService.addRule('pre', {
-    filter: (node, tdopts) => node.nodeName == 'PRE' && (!node.firstChild || node.firstChild.nodeName != 'CODE'),
+    filter: (node, tdopts) => {
+      return node.nodeName == 'PRE'
+             && (!node.firstChild || node.firstChild.nodeName != 'CODE')
+             && !node.querySelector('img');
+    },
     replacement: (content, node, tdopts) => {
       return convertToFencedCodeBlock(node, tdopts);
     }
@@ -206,7 +200,7 @@ function turndown(content, options, article) {
 
   // strip out non-printing special characters which CodeMirror displays as a red dot
   // see: https://codemirror.net/doc/manual.html#option_specialChars
-  markdown = markdown.replace(/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, '');
+  markdown = markdown.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, '');
   
   return { markdown: markdown, imageList: imageList };
 }
