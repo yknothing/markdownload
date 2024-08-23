@@ -269,6 +269,8 @@ function textReplace(string, article, disallowedChars = null) {
       if (s && disallowedChars) s = this.generateValidFileName(s, disallowedChars);
 
       string = string.replace(new RegExp('{' + key + '}', 'g'), s)
+        .replace(new RegExp('{' + key + ':lower}', 'g'), s.toLowerCase())
+        .replace(new RegExp('{' + key + ':upper}', 'g'), s.toUpperCase())
         .replace(new RegExp('{' + key + ':kebab}', 'g'), s.replace(/ /g, '-').toLowerCase())
         .replace(new RegExp('{' + key + ':snake}', 'g'), s.replace(/ /g, '_').toLowerCase())
         .replace(new RegExp('{' + key + ':camel}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toLowerCase()))
