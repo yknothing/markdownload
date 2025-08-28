@@ -1,6 +1,13 @@
 function notifyExtension() {
-    // send a message that the content should be clipped
-    browser.runtime.sendMessage({ type: "clip", dom: content});
+    // FIXED: Send proper DOM data instead of undefined content
+    const domData = getSelectionAndDom();
+    browser.runtime.sendMessage({ 
+        type: "clip", 
+        dom: domData.dom,
+        selection: domData.selection,
+        baseURI: window.location.href,
+        pageTitle: document.title
+    });
 }
 
 function getHTMLOfDocument() {
@@ -44,31 +51,68 @@ function getHTMLOfDocument() {
     return document.documentElement.outerHTML;
 }
 
-// code taken from here: https://www.reddit.com/r/javascript/comments/27bcao/anyone_have_a_method_for_finding_all_the_hidden/
+// CRITICAL FIX: More conservative hidden node removal to preserve article content
 function removeHiddenNodes(root) {
-    let nodeIterator, node,i = 0;
+    let nodeIterator, node, i = 0;
 
     nodeIterator = document.createNodeIterator(root, NodeFilter.SHOW_ELEMENT, function(node) {
-      let nodeName = node.nodeName.toLowerCase();
-      if (nodeName === "script" || nodeName === "style" || nodeName === "noscript" || nodeName === "math") {
-        return NodeFilter.FILTER_REJECT;
-      }
-      if (node.offsetParent === void 0) {
-        return NodeFilter.FILTER_ACCEPT;
-      }
-      let computedStyle = window.getComputedStyle(node, null);
-      if (computedStyle.getPropertyValue("visibility") === "hidden" || computedStyle.getPropertyValue("display") === "none") {
-        return NodeFilter.FILTER_ACCEPT;
-      }
+        let nodeName = node.nodeName.toLowerCase();
+        
+        // Always remove script, style, noscript
+        if (nodeName === "script" || nodeName === "style" || nodeName === "noscript") {
+            return NodeFilter.FILTER_REJECT;
+        }
+        
+        // CRITICAL: Don't remove elements that might contain article content
+        const articleSelectors = [
+            'article', 'main', 'section', 'content', 'post', 'entry',
+            'article-content', 'post-content', 'entry-content', 'content-container'
+        ];
+        
+        // Check if element or parent contains article-related classes/ids
+        const hasArticleContext = articleSelectors.some(selector => {
+            return node.className.toLowerCase().includes(selector) ||
+                   node.id.toLowerCase().includes(selector) ||
+                   (node.parentElement && (
+                       node.parentElement.className.toLowerCase().includes(selector) ||
+                       node.parentElement.id.toLowerCase().includes(selector)
+                   ));
+        });
+        
+        if (hasArticleContext) {
+            console.log(`🛡️ Preserving potentially important element: ${nodeName}.${node.className}`);
+            return NodeFilter.FILTER_REJECT; // Don't remove
+        }
+        
+        // Only remove elements that are truly hidden and likely non-content
+        if (node.offsetParent === null) {
+            let computedStyle = window.getComputedStyle(node, null);
+            let isHidden = computedStyle.getPropertyValue("visibility") === "hidden" || 
+                          computedStyle.getPropertyValue("display") === "none";
+                          
+            // Additional check: if element has text content, be more careful
+            if (isHidden && node.textContent.trim().length > 50) {
+                console.log(`⚠️ Hidden element has content, keeping: ${node.textContent.substring(0, 100)}...`);
+                return NodeFilter.FILTER_REJECT; // Don't remove elements with significant text
+            }
+            
+            return isHidden ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+        
+        return NodeFilter.FILTER_REJECT; // Don't remove visible elements
     });
 
+    let removedCount = 0;
     while ((node = nodeIterator.nextNode()) && ++i) {
-      if (node.parentNode instanceof HTMLElement) {
-        node.parentNode.removeChild(node);
-      }
+        if (node.parentNode instanceof HTMLElement) {
+            removedCount++;
+            node.parentNode.removeChild(node);
+        }
     }
-    return root
-  }
+    
+    console.log(`🧹 Removed ${removedCount} truly hidden elements while preserving content`);
+    return root;
+}
 
 // code taken from here: https://stackoverflow.com/a/5084044/304786
 function getHTMLOfSelection() {

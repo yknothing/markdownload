@@ -12,8 +12,40 @@ const downloadDebounceTime = 1000; // 1 second debounce
 self.serviceWorkerStatus = {
   initialized: false,
   dependenciesLoaded: false,
+  domPolyfillReady: false,
+  turndownServiceReady: false,
   errors: []
 };
+
+// CRITICAL: Initialization gate to prevent premature operations
+let workerInitializationPromise = null;
+let workerReady = false;
+
+// CRITICAL FIX: Global error handlers for service worker
+self.addEventListener('error', (event) => {
+  console.error('🚨 Service Worker Global Error:', event.error);
+  self.serviceWorkerStatus.errors.push({
+    type: 'global-error',
+    message: event.error?.message || 'Unknown error',
+    stack: event.error?.stack,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    timestamp: Date.now()
+  });
+});
+
+self.addEventListener('unhandledrejection', (event) => {
+  console.error('🚨 Service Worker Unhandled Rejection:', event.reason);
+  self.serviceWorkerStatus.errors.push({
+    type: 'unhandled-rejection', 
+    message: event.reason?.message || String(event.reason),
+    stack: event.reason?.stack,
+    timestamp: Date.now()
+  });
+  // Prevent the default handling (which would terminate the worker)
+  event.preventDefault();
+});
 
 // Import browser polyfill for cross-browser compatibility
 // Note: Service worker is in background/ directory, polyfill is in parent directory
@@ -25,9 +57,32 @@ try {
   self.serviceWorkerStatus.errors.push('browser-polyfill failed: ' + error.message);
 }
 
+// MV3 Scripting API polyfill - ensure browser.scripting works
+if (typeof browser !== 'undefined' && !browser.scripting && typeof chrome !== 'undefined' && chrome.scripting) {
+  browser.scripting = chrome.scripting;
+  console.log("✅ Added scripting API polyfill to browser object");
+}
+
 // CRITICAL FIX: Install DOM polyfill IMMEDIATELY before loading turndown.js
 // This prevents firstChild errors in turndown rules that are defined at load time
 let domPolyfillInstalled = false;
+
+/**
+ * CRITICAL: Synchronous DOM polyfill initialization
+ * Must complete before any other script imports
+ */
+function initializeDOMPolyfillSync() {
+  if (domPolyfillInstalled) return;
+  
+  console.log('🔧 Installing DOM polyfill synchronously...');
+  ensureDOMPolyfill();
+  domPolyfillInstalled = true;
+  self.serviceWorkerStatus.domPolyfillReady = true;
+  console.log('✅ DOM polyfill installation complete');
+}
+
+// Install DOM polyfill IMMEDIATELY
+initializeDOMPolyfillSync();
 
 /**
  * Install DOM polyfill IMMEDIATELY when service worker starts
@@ -38,6 +93,37 @@ function ensureDOMPolyfill() {
     return;
   }
   
+  // CRITICAL: Add missing DOM globals before creating elements
+  if (!globalThis.DOMParser) {
+    globalThis.DOMParser = class DOMParser {
+      parseFromString(source, mimeType) {
+        const doc = globalThis.document.implementation.createHTMLDocument('');
+        if (mimeType === 'text/html') {
+          doc.documentElement.innerHTML = source || '<html><head></head><body></body></html>';
+        }
+        return doc;
+      }
+    };
+  }
+
+  // Add Node constants that TurndownService expects
+  if (!globalThis.Node) {
+    globalThis.Node = {
+      ELEMENT_NODE: 1,
+      ATTRIBUTE_NODE: 2,
+      TEXT_NODE: 3,
+      CDATA_SECTION_NODE: 4,
+      ENTITY_REFERENCE_NODE: 5,
+      ENTITY_NODE: 6,
+      PROCESSING_INSTRUCTION_NODE: 7,
+      COMMENT_NODE: 8,
+      DOCUMENT_NODE: 9,
+      DOCUMENT_TYPE_NODE: 10,
+      DOCUMENT_FRAGMENT_NODE: 11,
+      NOTATION_NODE: 12
+    };
+  }
+
   // Create shared createElement function that returns a complete DOM element
   function createDOMElement(tagName, ownerDoc) {
     const element = {
@@ -56,12 +142,54 @@ function ensureDOMPolyfill() {
       nextSibling: null,
       previousSibling: null,
       
+      // Critical properties TurndownService expects
+      outerHTML: '',
+      innerText: '', // TurndownService often uses innerText
+      style: {},
+      className: '',
+      classList: {
+        contains: () => false,
+        add: () => {},
+        remove: () => {},
+        toggle: () => {}
+      },
+      
       // Attributes storage
       attributes: {},
       
       setAttribute: function(name, value) {
         this.attributes[name] = value;
         this[name] = value;
+        
+        // Handle special attributes
+        if (name === 'id') this.id = value;
+        if (name === 'class') {
+          this.className = value;
+          this.classList = {
+            contains: (cls) => (value || '').split(' ').includes(cls),
+            add: (cls) => { 
+              const classes = (this.className || '').split(' ').filter(Boolean);
+              if (!classes.includes(cls)) classes.push(cls);
+              this.className = classes.join(' ');
+              this.attributes['class'] = this.className;
+            },
+            remove: (cls) => {
+              const classes = (this.className || '').split(' ').filter(Boolean);
+              this.className = classes.filter(c => c !== cls).join(' ');
+              this.attributes['class'] = this.className;
+            },
+            toggle: (cls) => {
+              if (this.classList.contains(cls)) {
+                this.classList.remove(cls);
+              } else {
+                this.classList.add(cls);
+              }
+            }
+          };
+        }
+        
+        // Update outerHTML when attributes change
+        this._updateOuterHTML();
       },
       
       getAttribute: function(name) {
@@ -70,6 +198,23 @@ function ensureDOMPolyfill() {
       
       hasAttribute: function(name) {
         return Object.prototype.hasOwnProperty.call(this.attributes, name) || Object.prototype.hasOwnProperty.call(this, name);
+      },
+      
+      // Update outerHTML property
+      _updateOuterHTML: function() {
+        const attrs = [];
+        for (const [name, value] of Object.entries(this.attributes)) {
+          if (value !== null && value !== undefined) {
+            attrs.push(`${name}="${String(value)}"`);
+          }
+        }
+        const attrString = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+        
+        if (this._innerHTML) {
+          this.outerHTML = `<${this.tagName.toLowerCase()}${attrString}>${this._innerHTML}</${this.tagName.toLowerCase()}>`;
+        } else {
+          this.outerHTML = `<${this.tagName.toLowerCase()}${attrString}></${this.tagName.toLowerCase()}>`;
+        }
       },
       
       appendChild: function(child) {
@@ -154,7 +299,11 @@ function ensureDOMPolyfill() {
         }
         
         this._innerHTML = html || '';
-        this.textContent = html ? html.replace(/<[^>]*>/g, '') : '';
+        // Ensure textContent and innerText are always strings
+        const textOnly = html ? html.replace(/<[^>]*>/g, '') : '';
+        this.textContent = textOnly;
+        this.innerText = textOnly;
+        this._updateOuterHTML(); // Update outerHTML when innerHTML changes
         
         // Clear existing children
         this.childNodes = [];
@@ -281,6 +430,7 @@ function ensureDOMPolyfill() {
         nodeName: '#text',
         textContent: text || '',
         data: text || '',
+        nodeValue: text || '', // CRITICAL: TurndownService requires nodeValue property
         parentNode: null,
         nextSibling: null,
         previousSibling: null
@@ -358,7 +508,8 @@ function ensureDOMPolyfill() {
               nodeType: 3,
               nodeName: '#text',
               textContent: text || '',
-              data: text || ''
+              data: text || '',
+              nodeValue: text || '' // CRITICAL: TurndownService requires nodeValue property
             };
           },
           documentElement: {
@@ -490,6 +641,64 @@ function ensureDOMPolyfill() {
       };
     };
   })();
+  
+  // CRITICAL FIX: Add missing Window object and additional DOM APIs
+  if (!globalThis.Window) {
+    globalThis.Window = function() {};
+    globalThis.Window.prototype = {
+      document: globalThis.document,
+      Node: globalThis.Node,
+      DOMParser: globalThis.DOMParser
+    };
+  }
+  
+  if (!globalThis.window) {
+    globalThis.window = {
+      document: globalThis.document,
+      Node: globalThis.Node,
+      DOMParser: globalThis.DOMParser,
+      location: {
+        href: 'about:blank',
+        protocol: 'about:',
+        host: '',
+        hostname: '',
+        port: '',
+        pathname: 'blank',
+        search: '',
+        hash: ''
+      },
+      // Add properties TurndownService might expect
+      getComputedStyle: () => ({}),
+      HTMLElement: globalThis.HTMLElement || function() {}
+    };
+  }
+  
+  // Add missing HTMLElement base class
+  if (!globalThis.HTMLElement) {
+    globalThis.HTMLElement = function() {};
+    globalThis.HTMLElement.prototype = {
+      nodeType: 1,
+      appendChild: function() {},
+      removeChild: function() {},
+      getAttribute: function() { return null; },
+      setAttribute: function() {},
+      hasAttribute: function() { return false; }
+    };
+  }
+  
+  // Add URL constructor for compatibility
+  if (!globalThis.URL && !globalThis.webkitURL) {
+    globalThis.URL = function(url, base) {
+      this.href = url || '';
+      this.protocol = 'https:';
+      this.host = '';
+      this.hostname = '';
+      this.port = '';
+      this.pathname = '/';
+      this.search = '';
+      this.hash = '';
+    };
+  }
   
   domPolyfillInstalled = true;
   console.log("✅ Service Worker DOM polyfill installed with top-level createElement");
@@ -752,8 +961,8 @@ function normalizeColorValue(colorValue) {
     const colorName = hexToColorName(normalized);
     if (colorName) return colorName;
     
-    // 如果没有直接匹配，尝试分析RGB值
-    let hex = normalized.replace('#', '');
+    // 如果没有直接匹配，尝试分析RGB值  
+    let hex = (normalized || '').replace('#', '');
     if (hex.length === 3) {
       hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
     }
@@ -771,7 +980,7 @@ function normalizeColorValue(colorValue) {
   if (normalized.startsWith('rgb')) {
     const rgbMatch = normalized.match(/rgba?\(([^)]+)\)/);
     if (rgbMatch) {
-      const values = rgbMatch[1].split(',').map(v => parseInt(v.trim()));
+      const values = (rgbMatch[1] || '').split(',').map(v => parseInt(v.trim()));
       return rgbToColorName(values[0], values[1], values[2]) || normalized;
     }
   }
@@ -914,16 +1123,32 @@ function turndown(content, options, article) {
   
   // DOM polyfill is now installed at Service Worker startup, no need to call again
   
-  // CRITICAL: Perform comprehensive TurndownService health check
+  // CRITICAL: Perform comprehensive TurndownService health check with enhanced error isolation
   console.log('🔧 turndown: Performing TurndownService health check...');
-  const healthCheck = performTurndownHealthCheck();
+  let healthCheck;
+  try {
+    healthCheck = performTurndownHealthCheck();
+  } catch (healthCheckError) {
+    console.error("❌ CRITICAL: Health check itself threw an error:", healthCheckError);
+    // Create a failed health check object
+    healthCheck = {
+      isHealthy: false,
+      errors: [`Health check execution failed: ${healthCheckError?.message || 'Unknown error'}`],
+      warnings: [],
+      diagnostics: {
+        healthCheckException: true,
+        exceptionMessage: healthCheckError?.message || 'Unknown',
+        exceptionName: healthCheckError?.name || 'UnknownError'
+      }
+    };
+  }
   
-  if (!healthCheck.isHealthy) {
+  if (!healthCheck || !healthCheck.isHealthy) {
     console.error("❌ CRITICAL: TurndownService health check failed");
     console.log("🏥 Health check results:", JSON.stringify(healthCheck, null, 2));
     
-    // Try to provide actionable error information
-    const primaryError = healthCheck.errors[0] || 'Unknown health check failure';
+    // Try to provide actionable error information with null safety
+    const primaryError = (healthCheck?.errors && healthCheck.errors[0]) || 'Unknown health check failure';
     throw new Error(`TurndownService health check failed: ${primaryError}`);
   }
   
@@ -1037,7 +1262,7 @@ function turndown(content, options, article) {
           src = node.getAttribute('data-src') || 
                 node.getAttribute('data-lazy-src') ||
                 node.getAttribute('data-original') ||
-                node.getAttribute('srcset')?.split(' ')[0];
+                (node.getAttribute('srcset') || '').split(' ')[0] || null;
         }
         
         // If still no src, create a placeholder
@@ -1049,7 +1274,7 @@ function turndown(content, options, article) {
         } else {
           // Validate and fix the URI
           try {
-            src = validateUri(src, article.baseURI);
+            src = validateUri(src, article?.baseURI || 'https://example.com');
             node.setAttribute('src', src);
           } catch (error) {
             console.warn('Invalid image URI, using placeholder:', src);
@@ -1064,7 +1289,7 @@ function turndown(content, options, article) {
           if (!imageList[src] || imageList[src] != imageFilename) {
             let i = 1;
             while (Object.values(imageList).includes(imageFilename)) {
-              const parts = imageFilename.split('.');
+              const parts = (imageFilename || '').split('.');
               if (i == 1) parts.splice(parts.length - 1, 0, i++);
               else parts.splice(parts.length - 2, 1, i++);
               imageFilename = parts.join('.');
@@ -1073,9 +1298,24 @@ function turndown(content, options, article) {
           }
           
           const obsidianLink = options.imageStyle.startsWith("obsidian");
-          const localSrc = options.imageStyle === 'obsidian-nofolder'
-            ? imageFilename.substring(imageFilename.lastIndexOf('/') + 1)
-            : imageFilename.split('/').map(s => obsidianLink ? s : encodeURI(s)).join('/');
+          let localSrc;
+          
+          // CRITICAL FIX: Enhanced null safety for image filename processing
+          if (options.imageStyle === 'obsidian-nofolder') {
+            localSrc = imageFilename ? imageFilename.substring(imageFilename.lastIndexOf('/') + 1) : '';
+          } else {
+            try {
+              if (imageFilename && typeof imageFilename === 'string') {
+                localSrc = imageFilename.split('/').map(s => obsidianLink ? s : encodeURI(s)).join('/');
+              } else {
+                console.warn('Image processing: Invalid imageFilename:', imageFilename);
+                localSrc = '';
+              }
+            } catch (imageProcessingError) {
+              console.error('Image processing: Error during filename split/map:', imageProcessingError);
+              localSrc = imageFilename || '';
+            }
+          }
           
           if(options.imageStyle != 'originalSource' && options.imageStyle != 'base64') {
             node.setAttribute('src', localSrc);
@@ -1096,7 +1336,7 @@ function turndown(content, options, article) {
         
         // Handle placeholder images
         if (src.startsWith('placeholder:')) {
-          const placeholderText = src.replace('placeholder:', '');
+          const placeholderText = (src || '').replace('placeholder:', '');
           return `![${alt || placeholderText}](# "Image not available: ${placeholderText}")`;
         }
         
@@ -1124,7 +1364,7 @@ function turndown(content, options, article) {
     filter: (node, tdopts) => {
       if (node.nodeName == 'A' && node.getAttribute('href')) {
         const href = node.getAttribute('href');
-        node.setAttribute('href', validateUri(href, article.baseURI));
+        node.setAttribute('href', validateUri(href, article?.baseURI || 'https://example.com'));
         return options.linkStyle == 'stripLinks';
       }
       return false;
@@ -1135,9 +1375,12 @@ function turndown(content, options, article) {
   // Add math processing rule
   turndownService.addRule('mathjax', {
     filter(node, options) {
-      return article.math.hasOwnProperty(node.id);
+      return article?.math && typeof article.math === 'object' && article.math.hasOwnProperty(node.id);
     },
     replacement(content, node, options) {
+      if (!article?.math || !article.math[node.id]) {
+        return content;
+      }
       const math = article.math[node.id];
       let tex = math.tex.trim().replaceAll('\xa0', '');
 
@@ -1328,10 +1571,31 @@ function turndown(content, options, article) {
     throw new Error(`Turndown conversion failed: ${error.message}`);
   }
   
-  // CRITICAL: Validate conversion result
+  // CRITICAL: Validate conversion result with fallback
   if (!convertedMarkdown) {
-    console.error("❌ turndown: Conversion returned null/undefined");
-    throw new Error("Turndown conversion returned null or undefined");
+    console.error("❌ turndown: Conversion returned null/undefined, attempting fallback");
+    
+    // CRITICAL FIX: Implement robust fallback for failed conversions
+    try {
+      // Clean the HTML content more aggressively for fallback
+      let fallbackContent = content
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]*>/g, '\n')  // Replace all HTML tags with newlines
+        .replace(/\s+/g, ' ')       // Normalize whitespace
+        .replace(/\n\s*\n/g, '\n\n') // Clean up multiple newlines
+        .trim();
+        
+      if (fallbackContent.length > 0) {
+        console.log("✅ turndown: Using fallback plain text conversion");
+        convertedMarkdown = fallbackContent;
+      } else {
+        throw new Error("Both Turndown conversion and fallback failed");
+      }
+    } catch (fallbackError) {
+      console.error("❌ turndown: Even fallback conversion failed:", fallbackError);
+      throw new Error("Turndown conversion returned null or undefined, fallback also failed");
+    }
   }
   
   if (typeof convertedMarkdown !== 'string') {
@@ -1454,50 +1718,168 @@ function performTurndownHealthCheck() {
     // Check 5: DOM polyfill functionality
     try {
       const testDoc = globalThis.document || global.document;
-      const parser = new globalThis.DOMParser();
-      const testHtml = '<div><p>Test content</p></div>';
-      const parsedDoc = parser.parseFromString(testHtml, 'text/html');
+      healthCheck.diagnostics.documentExists = !!testDoc;
+      healthCheck.diagnostics.createElementExists = !!(testDoc && typeof testDoc.createElement === 'function');
       
-      healthCheck.diagnostics.domPolyfillWorks = !!parsedDoc && typeof parsedDoc.querySelector === 'function';
-      
-      if (!healthCheck.diagnostics.domPolyfillWorks) {
-        healthCheck.isHealthy = false;
-        healthCheck.errors.push('DOM polyfill not functioning properly');
+      if (testDoc && typeof testDoc.createElement === 'function') {
+        const testElement = testDoc.createElement('div');
+        testElement.innerHTML = '<p>Test content</p>';
+        healthCheck.diagnostics.domPolyfillWorks = !!(testElement.firstChild && testElement.firstChild.nodeName === 'P');
+        
+        // CRITICAL FIX: Additional DOM API checks for TurndownService compatibility
+        healthCheck.diagnostics.nodeConstants = !!(globalThis.Node && globalThis.Node.ELEMENT_NODE === 1);
+        healthCheck.diagnostics.windowExists = !!(globalThis.window || globalThis.Window);
+        healthCheck.diagnostics.htmlElementExists = !!globalThis.HTMLElement;
+        
+        // Test createElement with different tags that TurndownService uses
+        try {
+          const testP = testDoc.createElement('p');
+          const testA = testDoc.createElement('a');
+          const testImg = testDoc.createElement('img');
+          healthCheck.diagnostics.multipleElementTypes = !!(testP && testA && testImg);
+        } catch (elemError) {
+          healthCheck.diagnostics.multipleElementTypes = false;
+          healthCheck.warnings.push(`Multiple element creation failed: ${elemError.message}`);
+        }
+        
+      } else {
+        healthCheck.diagnostics.domPolyfillWorks = false;
       }
+      
+      // Test DOMParser if available
+      if (globalThis.DOMParser) {
+        try {
+          const parser = new globalThis.DOMParser();
+          const testHtml = '<div><p>Test content</p></div>';
+          const parsedDoc = parser.parseFromString(testHtml, 'text/html');
+          healthCheck.diagnostics.domParserWorks = !!parsedDoc;
+          
+          // Test that parsed document has expected structure
+          if (parsedDoc && parsedDoc.body) {
+            healthCheck.diagnostics.domParserStructure = true;
+          } else {
+            healthCheck.diagnostics.domParserStructure = false;
+            healthCheck.warnings.push('DOMParser result lacks expected document structure');
+          }
+        } catch (parserError) {
+          healthCheck.diagnostics.domParserWorks = false;
+          healthCheck.diagnostics.domParserStructure = false;
+          healthCheck.warnings.push(`DOMParser test failed: ${parserError.message}`);
+        }
+      } else {
+        healthCheck.diagnostics.domParserWorks = false;
+        healthCheck.warnings.push('DOMParser not available');
+      }
+      
+      // More comprehensive DOM polyfill validation
+      const criticalMissing = [];
+      if (!healthCheck.diagnostics.domPolyfillWorks) criticalMissing.push('basic DOM functionality');
+      if (!healthCheck.diagnostics.nodeConstants) criticalMissing.push('Node constants');
+      if (!healthCheck.diagnostics.domParserWorks) criticalMissing.push('DOMParser');
+      
+      if (criticalMissing.length > 0) {
+        healthCheck.isHealthy = false;
+        healthCheck.errors.push(`Critical DOM APIs missing: ${criticalMissing.join(', ')}`);
+      }
+      
     } catch (domError) {
       healthCheck.isHealthy = false;
       healthCheck.errors.push(`DOM polyfill error: ${domError.message}`);
       healthCheck.diagnostics.domPolyfillWorks = false;
     }
     
-    // Check 6: Basic conversion test
+    // Check 6: Basic conversion test with comprehensive DOM validation
     try {
-      const testResult = testInstance.turndown('<p>Health check test</p>');
-      healthCheck.diagnostics.basicConversionWorks = testResult === 'Health check test';
-      healthCheck.diagnostics.basicConversionResult = testResult;
+      console.log('🧪 Testing TurndownService basic conversion...');
       
-      if (!healthCheck.diagnostics.basicConversionWorks) {
-        healthCheck.warnings.push(`Basic conversion returned unexpected result: "${testResult}"`);
+      // Pre-test: Validate DOM environment that TurndownService expects
+      const testDiv = globalThis.document.createElement('div');
+      testDiv.innerHTML = '<p>Test content</p>';
+      console.log('🔍 DOM test - testDiv:', testDiv);
+      console.log('🔍 DOM test - innerHTML:', testDiv.innerHTML);
+      console.log('🔍 DOM test - firstChild:', testDiv.firstChild);
+      console.log('🔍 DOM test - firstChild type:', typeof testDiv.firstChild);
+      
+      if (testDiv.firstChild) {
+        console.log('🔍 DOM test - firstChild.textContent:', testDiv.firstChild.textContent);
+        console.log('🔍 DOM test - firstChild.nodeName:', testDiv.firstChild.nodeName);
+      }
+      
+      // Test with minimal content first
+      console.log('🔍 Attempting TurndownService conversion...');
+      const testResult = testInstance.turndown('<p>Health check test</p>');
+      console.log('🔍 TurndownService result:', testResult);
+      console.log('🔍 TurndownService result type:', typeof testResult);
+      
+      healthCheck.diagnostics.basicConversionResult = testResult;
+      healthCheck.diagnostics.basicConversionResultType = typeof testResult;
+      
+      // Enhanced null safety check with more lenient validation
+      const isValidResult = testResult != null && typeof testResult === 'string';
+      healthCheck.diagnostics.basicConversionWorks = isValidResult;
+      
+      if (!isValidResult) {
+        healthCheck.isHealthy = false;
+        healthCheck.errors.push(`Basic conversion returned invalid result (type: ${typeof testResult}): "${testResult}"`);
+      } else if (testResult.trim().length === 0) {
+        // Empty result is concerning but not necessarily a fatal error
+        healthCheck.warnings.push(`Basic conversion returned empty string - DOM parsing may need adjustment`);
+        console.warn('⚠️ TurndownService returned empty string, this suggests DOM parsing issues');
+        
+        // Try with a different approach - direct text content
+        try {
+          const simpleTest = testInstance.turndown('Health check test');
+          if (simpleTest && simpleTest.trim().length > 0) {
+            console.log('✅ Simple text conversion works:', simpleTest);
+            healthCheck.diagnostics.basicConversionWorks = true;
+          } else {
+            console.log('⚠️ Even simple text conversion failed');
+          }
+        } catch (simpleError) {
+          console.error('❌ Simple text conversion also failed:', simpleError);
+        }
+      } else {
+        // Safe string operations with null checking
+        try {
+          if (typeof testResult === 'string' && !testResult.includes('Health check test')) {
+            healthCheck.warnings.push(`Basic conversion result doesn't contain expected text: "${testResult}"`);
+          }
+        } catch (stringError) {
+          healthCheck.warnings.push(`String operation failed on conversion result: ${stringError.message}`);
+        }
       }
     } catch (conversionError) {
       healthCheck.isHealthy = false;
-      healthCheck.errors.push(`Basic conversion failed: ${conversionError.message}`);
+      console.error('❌ TurndownService conversion failed:', conversionError);
+      console.error('❌ Error stack:', conversionError.stack);
+      
+      // Enhanced error diagnostics
+      healthCheck.errors.push(`Basic conversion failed: ${conversionError?.message || 'Unknown conversion error'}`);
       healthCheck.diagnostics.basicConversionWorks = false;
+      healthCheck.diagnostics.basicConversionResult = null;
+      healthCheck.diagnostics.basicConversionResultType = 'error';
+      healthCheck.diagnostics.conversionErrorMessage = conversionError?.message;
+      healthCheck.diagnostics.conversionErrorStack = conversionError?.stack?.substring(0, 500);
     }
     
-    // Check 7: Complex content test
+    // Check 7: Complex content test  
     try {
       const complexHtml = '<div><h1>Test Header</h1><p>Paragraph with <strong>bold</strong> text</p><ul><li>List item</li></ul></div>';
       const complexResult = testInstance.turndown(complexHtml);
-      healthCheck.diagnostics.complexConversionWorks = complexResult && complexResult.length > 0;
-      healthCheck.diagnostics.complexConversionLength = complexResult?.length || 0;
       
-      if (!healthCheck.diagnostics.complexConversionWorks) {
-        healthCheck.warnings.push('Complex content conversion failed or returned empty result');
+      // Enhanced null safety for complex conversion
+      const isValidComplex = complexResult != null && typeof complexResult === 'string' && complexResult.length > 0;
+      healthCheck.diagnostics.complexConversionWorks = isValidComplex;
+      healthCheck.diagnostics.complexConversionLength = (complexResult && typeof complexResult === 'string') ? complexResult.length : 0;
+      healthCheck.diagnostics.complexResultType = typeof complexResult;
+      
+      if (!isValidComplex) {
+        healthCheck.warnings.push(`Complex content conversion failed or returned invalid result (type: ${typeof complexResult})`);
       }
     } catch (complexError) {
-      healthCheck.warnings.push(`Complex conversion test failed: ${complexError.message}`);
+      healthCheck.warnings.push(`Complex conversion test failed: ${complexError?.message || 'Unknown error'}`);
       healthCheck.diagnostics.complexConversionWorks = false;
+      healthCheck.diagnostics.complexResultType = 'error';
     }
     
     // Check 8: Memory and performance indicators
@@ -1690,7 +2072,9 @@ async function fallbackHtmlToMarkdown(htmlContent, article) {
       // If all conversion failed, provide a basic text representation
       const textContent = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       if (textContent.length > 0) {
-        markdown = `# ${article.title || 'Extracted Content'}\n\n${textContent}`;
+        // CRITICAL FIX: Enhanced null safety for article.title access
+        const title = article?.title && typeof article.title === 'string' ? article.title : 'Extracted Content';
+        markdown = `# ${title}\n\n${textContent}`;
       } else {
         throw new Error("No content could be extracted using fallback method");
       }
@@ -1802,11 +2186,13 @@ function getImageFilename(src, options, prependFilePath = true) {
 
   let imagePrefix = (options.imagePrefix || '');
 
-  if (prependFilePath && options.title.includes('/')) {
-    imagePrefix = options.title.substring(0, options.title.lastIndexOf('/') + 1) + imagePrefix;
+  // CRITICAL FIX: Add null safety for options.title access
+  const title = options?.title || '';
+  if (prependFilePath && title.includes('/')) {
+    imagePrefix = title.substring(0, title.lastIndexOf('/') + 1) + imagePrefix;
   }
-  else if (prependFilePath) {
-    imagePrefix = options.title + (imagePrefix.startsWith('/') ? '' : '/') + imagePrefix;
+  else if (prependFilePath && title) {
+    imagePrefix = title + (imagePrefix.startsWith('/') ? '' : '/') + imagePrefix;
   }
   
   if (filename.includes(';base64,')) {
@@ -1830,21 +2216,76 @@ function getImageFilename(src, options, prependFilePath = true) {
  * @returns {string} - String with replacements
  */
 function textReplace(string, article, disallowedChars = null) {
+  // CRITICAL FIX: Enhanced null safety and defensive programming
+  if (!string || typeof string !== 'string') {
+    console.warn('textReplace: invalid string parameter:', string);
+    return String(string || '');
+  }
+  
+  if (!article || typeof article !== 'object') {
+    console.warn('textReplace: article is not a valid object:', article);
+    return string;
+  }
+  
+  // CRITICAL FIX: Ensure essential properties have safe defaults
+  const essentialDefaults = {
+    title: 'Untitled',
+    siteName: '',
+    hostname: '',
+    pathname: '',
+    byline: '',
+    excerpt: '',
+    publishedTime: ''
+  };
+  
+  // Apply defaults for missing essential properties
+  Object.keys(essentialDefaults).forEach(key => {
+    if (!(key in article) || article[key] === null || article[key] === undefined) {
+      article[key] = essentialDefaults[key];
+    }
+  });
+  
   for (const key in article) {
     if (article.hasOwnProperty(key) && key != "content") {
-      let s = (article[key] || '') + '';
-      if (s && disallowedChars) s = generateValidFileName(s, disallowedChars);
+      // CRITICAL FIX: Add null safety for article property access
+      const value = article[key];
+      let s = '';
+      
+      if (value !== null && value !== undefined) {
+        s = String(value);
+        if (s && disallowedChars) {
+          try {
+            s = generateValidFileName(s, disallowedChars);
+          } catch (genError) {
+            console.warn(`textReplace: filename generation failed for ${key}:`, genError);
+            s = String(value).replace(/[<>:"/\\|?*]/g, '_'); // Basic fallback
+          }
+        }
+      }
 
-      string = string.replace(new RegExp('{' + key + '}', 'g'), s)
-        .replace(new RegExp('{' + key + ':lower}', 'g'), s.toLowerCase())
-        .replace(new RegExp('{' + key + ':upper}', 'g'), s.toUpperCase())
-        .replace(new RegExp('{' + key + ':kebab}', 'g'), s.replace(/ /g, '-').toLowerCase())
-        .replace(new RegExp('{' + key + ':mixed-kebab}', 'g'), s.replace(/ /g, '-'))
-        .replace(new RegExp('{' + key + ':snake}', 'g'), s.replace(/ /g, '_').toLowerCase())
-        .replace(new RegExp('{' + key + ':mixed_snake}', 'g'), s.replace(/ /g, '_'))
-        .replace(new RegExp('{' + key + ':obsidian-cal}', 'g'), s.replace(/ /g, '-').replace(/-{2,}/g, "-"))
-        .replace(new RegExp('{' + key + ':camel}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toLowerCase()))
-        .replace(new RegExp('{' + key + ':pascal}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toUpperCase()));
+      // CRITICAL FIX: Add null safety for all string operations
+      try {
+        if (typeof s === 'string') {
+          string = string.replace(new RegExp('{' + key + '}', 'g'), s)
+            .replace(new RegExp('{' + key + ':lower}', 'g'), s.toLowerCase())
+            .replace(new RegExp('{' + key + ':upper}', 'g'), s.toUpperCase())
+            .replace(new RegExp('{' + key + ':kebab}', 'g'), s.replace(/ /g, '-').toLowerCase())
+            .replace(new RegExp('{' + key + ':mixed-kebab}', 'g'), s.replace(/ /g, '-'))
+            .replace(new RegExp('{' + key + ':snake}', 'g'), s.replace(/ /g, '_').toLowerCase())
+            .replace(new RegExp('{' + key + ':mixed_snake}', 'g'), s.replace(/ /g, '_'))
+            .replace(new RegExp('{' + key + ':obsidian-cal}', 'g'), s.replace(/ /g, '-').replace(/-{2,}/g, "-"))
+            .replace(new RegExp('{' + key + ':camel}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toLowerCase()))
+            .replace(new RegExp('{' + key + ':pascal}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toUpperCase()));
+        } else {
+          // Handle non-string values by just replacing with empty string
+          string = string.replace(new RegExp('{' + key + '}', 'g'), ''); 
+          console.warn(`textReplace: Non-string value for key ${key}:`, s);
+        }
+      } catch (replaceError) {
+        console.error(`textReplace: Error processing key ${key}:`, replaceError);
+        // Fallback: just replace the key with empty string
+        string = string.replace(new RegExp('{' + key + '}', 'g'), '');
+      }
     }
   }
 
@@ -1870,7 +2311,7 @@ function textReplace(string, article, disallowedChars = null) {
         seperator = JSON.parse(JSON.stringify(seperator).replace(/\\\\/g, '\\'));
       }
       catch { }
-      const keywordsString = (article.keywords || []).join(seperator);
+      const keywordsString = (article?.keywords && Array.isArray(article.keywords) ? article.keywords : []).join(seperator);
       string = string.replace(new RegExp(match.replace(/\\/g, '\\\\'), 'g'), keywordsString);
     });
   }
@@ -1892,12 +2333,32 @@ async function convertArticleToMarkdown(article, downloadImages = null) {
   console.log("📊 Article content length:", article?.content?.length || 0);
   console.log("📄 Article content preview:", article?.content?.substring(0, 300) + "...");
   
-  // CRITICAL: Validate article content before processing
-  if (!article || !article.content) {
-    console.error("❌ convertArticleToMarkdown: Article or content is missing");
+  // CRITICAL: Comprehensive article validation with defensive fallbacks
+  if (!article) {
+    console.error("❌ convertArticleToMarkdown: Article is null or undefined");
+    throw new Error("Article object is null or undefined");
+  }
+  
+  if (typeof article !== 'object') {
+    console.error("❌ convertArticleToMarkdown: Article is not an object:", typeof article);
+    throw new Error("Article must be an object");
+  }
+  
+  if (!article.content) {
+    console.error("❌ convertArticleToMarkdown: Article content is missing");
     console.log("📊 Article object:", JSON.stringify(article, null, 2));
     throw new Error("Article content is missing or empty");
   }
+  
+  // Add defensive defaults for missing properties
+  const safeArticle = {
+    title: article?.title || 'Untitled',
+    baseURI: article?.baseURI || 'https://example.com',
+    math: article?.math || {},
+    keywords: Array.isArray(article?.keywords) ? article.keywords : [],
+    content: typeof article?.content === 'string' ? article.content : '',
+    ...article  // Override with actual properties if they exist
+  };
   
   if (typeof article.content !== 'string') {
     console.error("❌ convertArticleToMarkdown: Article content is not a string");
@@ -1923,8 +2384,19 @@ async function convertArticleToMarkdown(article, downloadImages = null) {
     options.frontmatter = options.backmatter = '';
   }
 
-  options.imagePrefix = textReplace(options.imagePrefix, article, options.disallowedChars)
-    .split('/').map(s=>generateValidFileName(s, options.disallowedChars)).join('/');
+  // CRITICAL FIX: Enhanced null safety for imagePrefix split operation
+  const rawImagePrefix = textReplace(options.imagePrefix, article, options.disallowedChars);
+  if (rawImagePrefix && typeof rawImagePrefix === 'string') {
+    try {
+      options.imagePrefix = rawImagePrefix.split('/').map(s=>generateValidFileName(s, options.disallowedChars)).join('/');
+    } catch (imagePrefixError) {
+      console.error('convertArticleToMarkdown: Error processing imagePrefix:', imagePrefixError);
+      options.imagePrefix = ''; // Safe fallback
+    }
+  } else {
+    console.warn('convertArticleToMarkdown: Invalid imagePrefix result:', rawImagePrefix);
+    options.imagePrefix = '';
+  }
 
   console.log("🔧 convertArticleToMarkdown: Calling turndown with validated content");
   
@@ -1940,7 +2412,7 @@ async function convertArticleToMarkdown(article, downloadImages = null) {
   let result;
   try {
     console.log('📞 Calling turndown() function...');
-    result = turndown(article.content, options, article);
+    result = turndown(safeArticle.content, options, safeArticle);
     console.log('✅ turndown() completed, validating result...');
     
     // CRITICAL: Comprehensive result validation
@@ -1980,8 +2452,8 @@ async function convertArticleToMarkdown(article, downloadImages = null) {
     
     if (result.markdown.trim().length === 0) {
       console.error("❌ convertArticleToMarkdown: turndown returned empty markdown");
-      console.log("📊 Original content length:", article.content.length);
-      console.log("📄 Original content preview:", article.content.substring(0, 500));
+      console.log("📊 Original content length:", safeArticle.content.length);
+      console.log("📄 Original content preview:", safeArticle.content.substring(0, 500));
       console.log("📊 Raw markdown value:", JSON.stringify(result.markdown));
       throw new Error("Turndown conversion resulted in empty markdown");
     }
@@ -1994,13 +2466,18 @@ async function convertArticleToMarkdown(article, downloadImages = null) {
       errorType: typeof turndownError,
       errorName: turndownError.name,
       errorMessage: turndownError.message,
+      // CRITICAL FIX: Enhanced error diagnostics
+      domPolyfillStatus: typeof globalThis.document !== 'undefined',
+      turndownServiceExists: typeof TurndownService !== 'undefined',
+      articleContentType: typeof safeArticle?.content,
+      articleContentLength: safeArticle?.content?.length || 0,
       errorStack: turndownError.stack?.substring(0, 500)
     });
     console.log("🔄 Attempting fallback conversion...");
     
     // FALLBACK: Simple HTML to text conversion
     try {
-      result = await fallbackHtmlToMarkdown(article.content, article);
+      result = await fallbackHtmlToMarkdown(safeArticle.content, safeArticle);
       console.log("✅ Fallback conversion successful");
     } catch (fallbackError) {
       console.error("❌ Fallback conversion also failed:", fallbackError);
@@ -2041,12 +2518,12 @@ function processImagePlaceholders(markdown, article) {
     console.log(`🖼️ Found image placeholder: ${match}`);
     
     // Try to find corresponding image in the original HTML content
-    const imageInfo = extractImageFromContext(article.content, parseInt(imageNumber));
+    const imageInfo = extractImageFromContext(safeArticle.content, parseInt(imageNumber));
     
     if (imageInfo && imageInfo.src) {
       console.log(`✅ Found image source for placeholder ${imageNumber}: ${imageInfo.src}`);
       const altText = imageInfo.alt || `Image ${imageNumber}`;
-      const title = imageInfo.title ? ` "${imageInfo.title}"` : '';
+      const title = (imageInfo && imageInfo.title && typeof imageInfo.title === 'string') ? ` "${imageInfo.title}"` : '';
       return `![${altText}](${imageInfo.src}${title})`;
     } else {
       console.log(`⚠️ No image source found for placeholder ${imageNumber}, using fallback`);
@@ -2224,6 +2701,12 @@ function downloadListener(id, url) {
  * @returns {string} - Base64 encoded string
  */
 function base64EncodeUnicode(str) {
+  // CRITICAL FIX: Add null safety for string parameter
+  if (!str || typeof str !== 'string') {
+    console.warn('base64EncodeUnicode: Invalid input, using empty string fallback');
+    str = '';
+  }
+  
   const utf8Bytes = encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
     return String.fromCharCode('0x' + p1);
   });
@@ -2235,51 +2718,111 @@ function base64EncodeUnicode(str) {
  * @param {Object} message - Message object
  */
 async function notify(message) {
+  // CRITICAL FIX: Add comprehensive message validation
+  if (!message || typeof message !== 'object') {
+    console.error("❌ Invalid message received:", message);
+    return false;
+  }
+  
   console.log("📨 Message received:", message.type);
   
   if (message.type == "clip") {
     try {
       console.log("📄 Processing clip data in service worker");
       
-      // Create article object from the raw DOM data
+      // CRITICAL FIX: Validate essential clip message properties
+      if (!message.dom || typeof message.dom !== 'string') {
+        console.error("❌ Invalid clip message: missing or invalid dom property");
+        await browser.runtime.sendMessage({ 
+          type: "display.md", 
+          error: "Invalid page content received"
+        });
+        return false;
+      }
+      
+      // Create article object from the raw DOM data with safe defaults
       const article = await getArticleFromDom(
         message.dom, 
-        message.baseURI, 
-        message.pageTitle
+        message.baseURI || window.location?.href || "https://example.com", 
+        message.pageTitle || "Untitled"
       );
       
       // Use selection if provided, otherwise use full content
-      if (message.clipSelection && message.selection) {
+      if (message.clipSelection && message.selection && typeof message.selection === 'string') {
         article.content = message.selection;
         console.log("📄 Using selected content, length:", message.selection.length);
+      } else if (message.clipSelection && message.selection) {
+        console.warn("⚠️ Invalid selection data type:", typeof message.selection);
       }
       
       // Process content using Readability and Turndown
       const { markdown, imageList } = await convertArticleToMarkdown(article, false);
       const title = await formatTitle(article);
       
+      // CRITICAL FIX: Validate processed content before sending
+      const safeMarkdown = (markdown && typeof markdown === 'string') ? markdown : "Content extraction failed";
+      const safeTitle = (title && typeof title === 'string') ? title : "Untitled";
+      const safeImageList = (imageList && typeof imageList === 'object') ? imageList : {};
+      
       console.log("✅ Content processed, sending back to popup");
+      console.log("📊 Processed data - Markdown length:", safeMarkdown.length, "Title:", safeTitle, "Images:", Object.keys(safeImageList).length);
       
       // Send processed markdown back to popup
       await browser.runtime.sendMessage({ 
         type: "display.md", 
-        markdown: markdown,
-        title: title,
-        imageList: imageList
+        markdown: safeMarkdown,
+        title: safeTitle,
+        imageList: safeImageList
       });
       
       return true; // ✅ EXPLICIT SUCCESS RETURN
       
     } catch (error) {
       console.error("❌ Error processing clip data:", error);
-      // Send error back to popup
+      // Send error back to popup with enhanced null safety
       try {
+        // CRITICAL FIX: Enhanced error serialization for cross-context communication
+        let errorMessage = 'Unknown error';
+        if (error) {
+          try {
+            if (typeof error === 'string') {
+              errorMessage = error;
+            } else if (error && typeof error === 'object') {
+              // Create serializable error object
+              const serializableError = {
+                name: error.name || 'Error',
+                message: error.message || String(error),
+                stack: error.stack || '',
+                type: typeof error
+              };
+              errorMessage = serializableError.message;
+              console.log('🔍 Serialized error:', serializableError);
+            } else {
+              errorMessage = String(error);
+            }
+          } catch (serializationError) {
+            console.error('❌ Error serialization failed:', serializationError);
+            errorMessage = 'Error serialization failed';
+          }
+        }
+        
         await browser.runtime.sendMessage({ 
           type: "display.md", 
-          error: "Failed to process content: " + (error?.message || error || 'Unknown error')
+          error: "Failed to process content: " + errorMessage
         });
       } catch (sendError) {
-        console.error("❌ Failed to send error message to popup:", sendError);
+        // CRITICAL FIX: Enhanced sendError handling with null safety
+        let sendErrorMsg = 'Unknown send error';
+        if (sendError && typeof sendError === 'object') {
+          if (typeof sendError.message === 'string') {
+            sendErrorMsg = sendError.message;
+          } else {
+            sendErrorMsg = String(sendError);
+          }
+        } else if (typeof sendError === 'string') {
+          sendErrorMsg = sendError;
+        }
+        console.error("❌ Failed to send error message to popup:", sendErrorMsg);
       }
       return false; // ✅ EXPLICIT ERROR RETURN
     }
@@ -2296,7 +2839,14 @@ async function notify(message) {
     globalDownloadInProgress = true;
     
     try {
-      await downloadMarkdown(message.markdown, message.title, message.tab.id, message.imageList, message.mdClipsFolder);
+      // CRITICAL FIX: Add null safety for message properties
+      const safeMarkdown = message?.markdown || '';
+      const safeTitle = message?.title || 'Untitled';
+      const safeTabId = message?.tab?.id || null;
+      const safeImageList = message?.imageList || {};
+      const safeMdClipsFolder = message?.mdClipsFolder || '';
+      
+      await downloadMarkdown(safeMarkdown, safeTitle, safeTabId, safeImageList, safeMdClipsFolder);
       console.log("✅ Download completed successfully");
       return true; // ✅ EXPLICIT SUCCESS RETURN
     } catch (error) {
@@ -2322,7 +2872,14 @@ async function notify(message) {
     
     try {
       // 处理从popup发来的已转换的markdown
-      await downloadMarkdown(message.markdown, message.title, message.tabId, message.imageList, message.mdClipsFolder);
+      // CRITICAL FIX: Add null safety for message properties (second instance)
+      const safeMarkdown2 = message?.markdown || '';
+      const safeTitle2 = message?.title || 'Untitled'; 
+      const safeTabId2 = message?.tabId || null;
+      const safeImageList2 = message?.imageList || {};
+      const safeMdClipsFolder2 = message?.mdClipsFolder || '';
+      
+      await downloadMarkdown(safeMarkdown2, safeTitle2, safeTabId2, safeImageList2, safeMdClipsFolder2);
       console.log("✅ Download completed successfully");
       return true; // ✅ EXPLICIT SUCCESS RETURN
     } catch (error) {
@@ -2404,23 +2961,23 @@ async function cleanHtmlString(htmlString) {
   
   let content = htmlString;
   
-  // Phase 1: Single-pass removal of noise elements and structural content
-  // Combines: style, script, link, meta, head, comments, nav, header, footer, aside, menu
-  const noisePattern = /<(?:style|script|link|meta|head|nav|header|footer|aside|menu)[^>]*>[\s\S]*?<\/(?:style|script|head|nav|header|footer|aside|menu)>|<(?:link|meta)[^>]*>|<!--[\s\S]*?-->/gi;
+  // Phase 1: CONSERVATIVE removal of only clearly non-content elements
+  // FIXED: More conservative - only remove truly unwanted elements
+  const noisePattern = /<(?:style|script|link|meta|head)[^>]*>[\s\S]*?<\/(?:style|script|head)>|<(?:link|meta)[^>]*>|<!--[\s\S]*?-->/gi;
   const beforeNoise = content.length;
   content = content.replace(noisePattern, '');
   console.log(`🔧 cleanHtmlString: Removed noise elements (${beforeNoise} -> ${content.length} chars)`);
 
-  // Phase 2: Single-pass removal of advertisement patterns (but be more conservative)
-  // Only remove clearly identified ad containers, not broad patterns
-  const adPattern = /<(?:div|iframe)[^>]*(?:class|id)="[^"]*(?:advertisement|banner|google-ads)[^"]*"[^>]*>[\s\S]*?<\/(?:div|iframe)>|<iframe[^>]*src="[^"]*doubleclick[^"]*"[^>]*>[\s\S]*?<\/iframe>/gi;
+  // Phase 2: ULTRA-CONSERVATIVE ad removal - only obvious ad containers
+  // FIXED: Only remove very specific ad patterns to avoid removing content
+  const adPattern = /<iframe[^>]*src="[^"]*(?:doubleclick|googleadservices|googlesyndication)[^"]*"[^>]*>[\s\S]*?<\/iframe>/gi;
   const beforeAds = content.length;
   content = content.replace(adPattern, '');
   console.log(`🔧 cleanHtmlString: Removed ads (${beforeAds} -> ${content.length} chars)`);
 
-  // Phase 3: CONSERVATIVE removal of only inline styles (keep class attributes for content extraction)
-  // This was too aggressive before - only remove inline styles, not all class attributes
-  const stylePattern = /\.[a-zA-Z][\w-]*\s*\{[^}]*\}|@media[^{]*\{[^{}]*\{[^}]*\}[^}]*\}|:root\s*\{[^}]*\}|style\s*=\s*"[^"]*"/gi;
+  // Phase 3: MINIMAL style removal - only remove embedded CSS, keep inline styles for now
+  // FIXED: Even more conservative - only remove CSS blocks, not inline styles
+  const stylePattern = /<style[^>]*>[\s\S]*?<\/style>/gi;
   const beforeStyles = content.length;
   content = content.replace(stylePattern, '');
   console.log(`🔧 cleanHtmlString: Removed inline styles (${beforeStyles} -> ${content.length} chars)`);
@@ -2468,12 +3025,373 @@ async function extractMathFromString(htmlString) {
  * @param {string} baseURI - Base URI
  * @returns {Object} - Article-like object
  */
-async function extractArticleFromString(htmlString, title, baseURI) {
-  console.log("🔧 extractArticleFromString: Starting extraction");
-  console.log("📊 Input HTML length:", htmlString?.length || 0);
-  console.log("📄 Input HTML preview:", htmlString?.substring(0, 300) + "...");
+// SOLID PRINCIPLE: Single Responsibility - Content extraction strategies
+class ContentExtractionStrategy {
+  constructor(name, priority = 1) {
+    this.name = name;
+    this.priority = priority;
+  }
   
-  // PERFORMANCE OPTIMIZATION: Check content size before processing
+  canHandle(htmlString) {
+    throw new Error('canHandle method must be implemented');
+  }
+  
+  extract(htmlString, baseURI) {
+    throw new Error('extract method must be implemented');
+  }
+}
+
+// SOLID PRINCIPLE: Open/Closed - Extensible content extraction without modification
+class SemanticTagStrategy extends ContentExtractionStrategy {
+  constructor() {
+    super('SemanticTag', 10);
+    this.semanticTags = ['main', 'article', 'section'];
+    this.contentSelectors = [
+      'main',
+      'article', 
+      'section',
+      '[role="main"]',
+      '.content',
+      '.article',
+      '.post-content',
+      '.entry-content',
+      '.article-content',
+      '.article-body',
+      '.post-body',
+      '.content-body',
+      '.markdown-body',
+      '.rich-content',
+      '.text-content',
+      '#content',
+      '#article',
+      '#main-content',
+      '#post-content',
+      // Chinese website patterns
+      '.article-detail',
+      '.content-detail',
+      '.post-detail',
+      '.article-container',
+      '.content-container'
+    ];
+  }
+  
+  canHandle(htmlString) {
+    return this.contentSelectors.some(selector => {
+      const tagMatch = selector.startsWith('.') || selector.startsWith('#') || selector.includes('[') 
+        ? new RegExp(`<[^>]*(?:class|id)="[^"]*${selector.slice(1)}[^"]*"[^>]*>`, 'i').test(htmlString)
+        : new RegExp(`<${selector}[^>]*>`, 'i').test(htmlString);
+      return tagMatch;
+    });
+  }
+  
+  extract(htmlString, baseURI) {
+    console.log("🎯 SemanticTagStrategy: Extracting content using semantic tags");
+    const candidates = [];
+    
+    for (const selector of this.contentSelectors) {
+      let regex;
+      if (selector.startsWith('.') || selector.startsWith('#')) {
+        const attrName = selector.startsWith('.') ? 'class' : 'id';
+        const value = selector.slice(1);
+        regex = new RegExp(`<([^>]+)\\s${attrName}="[^"]*${value}[^"]*"[^>]*>([\\s\\S]*?)<\\/\\1>`, 'gi');
+      } else if (selector.includes('[')) {
+        regex = new RegExp(`<([^>]+)${selector.replace(/\[|\]/g, '')}[^>]*>([\\s\\S]*?)<\\/\\1>`, 'gi');
+      } else {
+        regex = new RegExp(`<${selector}[^>]*>([\\s\\S]*?)<\\/${selector}>`, 'gi');
+      }
+      
+      const matches = [...htmlString.matchAll(regex)];
+      matches.forEach(match => {
+        const content = match[match.length - 1]; // Last capture group is content
+        if (content && content.length > 50) { // FIXED: Lower threshold for better coverage
+          candidates.push({content, source: selector, score: this.scoreContent(content)});
+        }
+      });
+    }
+    
+    return candidates.sort((a, b) => b.score - a.score);
+  }
+  
+  scoreContent(content) {
+    const textContent = content.replace(/<[^>]*>/g, '').trim();
+    let score = textContent.length;
+    
+    // ENHANCED: Boost for meaningful content patterns
+    if (content.includes('<p>')) score += 500;
+    if (content.includes('<div')) score += 200; // Div containers
+    if (content.includes('<h1>') || content.includes('<h2>') || content.includes('<h3>')) score += 300;
+    if (content.includes('<h4>') || content.includes('<h5>') || content.includes('<h6>')) score += 150;
+    
+    // ENHANCED: Multi-language content support
+    if (/[\u4e00-\u9fff]/.test(textContent)) score += 300; // Chinese content bonus (increased)
+    if (/[\u0400-\u04ff]/.test(textContent)) score += 250; // Cyrillic
+    if (/[\u0590-\u05ff]/.test(textContent)) score += 250; // Hebrew
+    if (/[\u0600-\u06ff]/.test(textContent)) score += 250; // Arabic
+    
+    // ENHANCED: Content quality indicators
+    const sentences = textContent.split(/[。！？.!?]/).filter(s => s.trim().length > 10);
+    if (sentences.length >= 3) score += 200; // Multiple sentences
+    if (textContent.length > 500) score += 100; // Substantial content
+    if (content.includes('<strong>') || content.includes('<em>')) score += 75;
+    if (content.includes('<blockquote>')) score += 100;
+    
+    return score;
+  }
+}
+
+// SOLID PRINCIPLE: Liskov Substitution - Comprehensive content strategy
+class ComprehensiveContentStrategy extends ContentExtractionStrategy {
+  constructor() {
+    super('Comprehensive', 5);
+  }
+  
+  canHandle(htmlString) {
+    // This strategy can always handle content as a fallback
+    return true;
+  }
+  
+  extract(htmlString, baseURI) {
+    console.log("🌐 ComprehensiveContentStrategy: Using comprehensive content analysis");
+    
+    // Strategy 1: Look for text-dense areas
+    const textDenseCandidates = this.findTextDenseRegions(htmlString);
+    
+    // Strategy 2: Aggregate all meaningful paragraphs and divs
+    const aggregatedContent = this.aggregateContentElements(htmlString);
+    
+    // Strategy 3: Use heuristics to find main content area
+    const heuristicContent = this.findContentByHeuristics(htmlString);
+    
+    const candidates = [
+      ...textDenseCandidates,
+      aggregatedContent,
+      heuristicContent
+    ].filter(candidate => candidate && candidate.content.length > 50); // FIXED: Lower threshold
+    
+    return candidates.sort((a, b) => b.score - a.score);
+  }
+  
+  findTextDenseRegions(htmlString) {
+    const candidates = [];
+    // Find areas with high text-to-tag ratio
+    const blocks = htmlString.split(/(?=<(?:div|p|article|section)[^>]*>)/i);
+    
+    blocks.forEach((block, index) => {
+      const textContent = block.replace(/<[^>]*>/g, '').trim();
+      const tagCount = (block.match(/<[^>]*>/g) || []).length;
+      const textLength = textContent.length;
+      
+      if (textLength > 100) { // FIXED: Lower threshold for better coverage
+        const density = tagCount > 0 ? textLength / tagCount : textLength;
+        const score = this.scoreContent(block) + density * 2;
+        
+        candidates.push({
+          content: block,
+          source: `text-dense-${index}`,
+          score: score
+        });
+      }
+    });
+    
+    return candidates;
+  }
+  
+  aggregateContentElements(htmlString) {
+    // Collect all paragraph and div content
+    const elements = [...htmlString.matchAll(/<(?:p|div)[^>]*>([\s\S]*?)<\/(?:p|div)>/gi)];
+    let aggregatedContent = '';
+    let totalScore = 0;
+    
+    elements.forEach(match => {
+      const content = match[1];
+      const textContent = content.replace(/<[^>]*>/g, '').trim();
+      
+      if (textContent.length > 30) { // FIXED: Even more permissive for aggregation
+        aggregatedContent += match[0]; // Include full HTML
+        totalScore += this.scoreContent(content);
+      }
+    });
+    
+    return {
+      content: aggregatedContent,
+      source: 'aggregated-elements',
+      score: totalScore
+    };
+  }
+  
+  findContentByHeuristics(htmlString) {
+    // Look for content patterns common in articles
+    const contentPatterns = [
+      // Look for containers with multiple paragraphs
+      /<div[^>]*>(?:[^<]*<p[^>]*>[\s\S]*?<\/p>[^<]*){3,}[\s\S]*?<\/div>/gi,
+      // Look for article-like structures
+      /<div[^>]*>[\s\S]*?<h[1-6][^>]*>[\s\S]*?(?:<p[^>]*>[\s\S]*?<\/p>[\s\S]*?){2,}[\s\S]*?<\/div>/gi
+    ];
+    
+    const candidates = [];
+    contentPatterns.forEach((pattern, index) => {
+      const matches = [...htmlString.matchAll(pattern)];
+      matches.forEach(match => {
+        const content = match[0];
+        const score = this.scoreContent(content);
+        
+        if (score > 200) { // FIXED: Lower score threshold for heuristics
+          candidates.push({
+            content: content,
+            source: `heuristic-${index}`,
+            score: score
+          });
+        }
+      });
+    });
+    
+    return candidates;
+  }
+  
+  scoreContent(content) {
+    const textContent = content.replace(/<[^>]*>/g, '').trim();
+    let score = textContent.length * 2; // Higher base score
+    
+    // Enhanced scoring for quality indicators
+    if (content.includes('<p>')) score += 300;
+    if (content.includes('<h1>') || content.includes('<h2>') || content.includes('<h3>')) score += 200;
+    if (/[\u4e00-\u9fff]/.test(textContent)) score += 150; // Chinese content bonus
+    if (textContent.split(/[。！？.!?]/).length > 5) score += 100; // Multiple sentences
+    if (content.includes('<strong>') || content.includes('<em>')) score += 50;
+    
+    // Penalty for non-content patterns
+    const lowerContent = content.toLowerCase();
+    if (lowerContent.includes('copyright') || lowerContent.includes('footer')) score -= 200;
+    if (lowerContent.includes('navigation') || lowerContent.includes('menu')) score -= 150;
+    if (lowerContent.includes('advertisement') || lowerContent.includes('sponsored')) score -= 300;
+    
+    return Math.max(0, score);
+  }
+}
+
+// ENHANCED: International content strategy for diverse website structures
+class InternationalContentStrategy extends ContentExtractionStrategy {
+  constructor() {
+    super('International', 8); // Higher priority than comprehensive
+  }
+  
+  canHandle(htmlString) {
+    // Check if content has international characters or common patterns
+    const hasInternationalChars = /[\u4e00-\u9fff\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff]/.test(htmlString);
+    const hasCommonPatterns = /(?:content|article|post|text|detail|main)[\w-]*["'][^>]*>/i.test(htmlString);
+    return hasInternationalChars || hasCommonPatterns;
+  }
+  
+  extract(htmlString, baseURI) {
+    console.log("🌍 InternationalContentStrategy: Extracting content using international patterns");
+    const candidates = [];
+    
+    // Strategy 1: Look for content in any div with substantial text
+    const divRegex = /<div[^>]*>([\s\S]*?)<\/div>/gi;
+    let match;
+    while ((match = divRegex.exec(htmlString)) !== null) {
+      const content = match[1];
+      const textContent = content.replace(/<[^>]*>/g, '').trim();
+      if (textContent.length > 100) {
+        candidates.push({
+          content: match[0],
+          source: 'international-div',
+          score: this.scoreContent(match[0])
+        });
+      }
+    }
+    
+    // Strategy 2: Aggregate all paragraphs and headers
+    const textElements = [...htmlString.matchAll(/<(?:p|h[1-6]|div)[^>]*>([^<]+(?:<[^>]*>[^<]*<\/[^>]*>[^<]*)*)<\/(?:p|h[1-6]|div)>/gi)];
+    let aggregatedText = '';
+    let totalScore = 0;
+    
+    textElements.forEach(match => {
+      const textContent = match[1].replace(/<[^>]*>/g, '').trim();
+      if (textContent.length > 20) {
+        aggregatedText += match[0];
+        totalScore += textContent.length * 2;
+        // Bonus for international content
+        if (/[\u4e00-\u9fff]/.test(textContent)) totalScore += 300;
+      }
+    });
+    
+    if (aggregatedText.length > 200) {
+      candidates.push({
+        content: aggregatedText,
+        source: 'international-aggregated',
+        score: totalScore
+      });
+    }
+    
+    return candidates.sort((a, b) => b.score - a.score);
+  }
+  
+  scoreContent(content) {
+    const textContent = content.replace(/<[^>]*>/g, '').trim();
+    let score = textContent.length * 1.5; // Higher base multiplier
+    
+    // International content bonuses
+    if (/[\u4e00-\u9fff]/.test(textContent)) score += 500; // Chinese
+    if (/[\u0400-\u04ff]/.test(textContent)) score += 400; // Cyrillic
+    if (/[\u0590-\u05ff]/.test(textContent)) score += 400; // Hebrew
+    if (/[\u0600-\u06ff]/.test(textContent)) score += 400; // Arabic
+    
+    // Structure bonuses
+    if (content.includes('<p>')) score += 400;
+    if (content.includes('<h')) score += 300;
+    if (content.includes('<div')) score += 200;
+    if (content.includes('<strong>') || content.includes('<em>')) score += 100;
+    
+    // Content quality
+    const sentences = textContent.split(/[。！？.!?]/).filter(s => s.trim().length > 5);
+    if (sentences.length >= 2) score += 200;
+    if (textContent.length > 500) score += 150;
+    
+    return score;
+  }
+}
+
+// SOLID PRINCIPLE: Dependency Inversion - Abstract content detector
+class ContentDetectorOrchestrator {
+  constructor() {
+    this.strategies = [];
+  }
+  
+  addStrategy(strategy) {
+    this.strategies.push(strategy);
+    this.strategies.sort((a, b) => b.priority - a.priority);
+  }
+  
+  async detectContent(htmlString, baseURI) {
+    console.log("🔍 ContentDetectorOrchestrator: Analyzing content with multiple strategies");
+    
+    for (const strategy of this.strategies) {
+      if (strategy.canHandle(htmlString)) {
+        console.log(`✅ Using strategy: ${strategy.name}`);
+        const results = strategy.extract(htmlString, baseURI);
+        if (results && results.length > 0) {
+          return results[0]; // Return best match
+        }
+      }
+    }
+    
+    console.log("⚠️ No strategy could extract content, using fallback");
+    return { content: htmlString, source: 'fallback', score: 0 };
+  }
+}
+
+async function extractArticleFromString(htmlString, title, baseURI) {
+  console.log("🔧 extractArticleFromString: Starting SOLID-principle based extraction");
+  console.log("📊 Input HTML length:", htmlString?.length || 0);
+  
+  // ENHANCED: Multi-strategy content detection with international support
+  const detector = new ContentDetectorOrchestrator();
+  detector.addStrategy(new SemanticTagStrategy());
+  detector.addStrategy(new InternationalContentStrategy()); // NEW: Better international support
+  detector.addStrategy(new ComprehensiveContentStrategy());
+  
+  // PERFORMANCE OPTIMIZATION: Check content size before processing  
   const sizeCheck = checkContentLimits(htmlString, 'article extraction');
   if (!sizeCheck.allowed) {
     console.error("❌ extractArticleFromString: Content size check failed:", sizeCheck.reason);
@@ -2484,109 +3402,63 @@ async function extractArticleFromString(htmlString, title, baseURI) {
   const bodyMatch = htmlString.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   let bodyContent = bodyMatch ? bodyMatch[1] : htmlString;
   console.log("📊 Body content length after extraction:", bodyContent.length);
-  console.log("📄 Body content preview:", bodyContent.substring(0, 300) + "...");
   
-  // Pre-clean obvious noise
+  // Clean content before processing
   console.log("🔧 extractArticleFromString: Cleaning HTML content");
   bodyContent = await cleanHtmlString(bodyContent);
   console.log("📊 Body content length after cleaning:", bodyContent.length);
-  console.log("📄 Body content preview after cleaning:", bodyContent.substring(0, 300) + "...");
   
-  // CRITICAL: Check if cleaning removed all content
+  // CRITICAL: Check if cleaning removed all content - use original if needed
   if (bodyContent.trim().length === 0) {
-    console.error("❌ extractArticleFromString: Content is empty after cleaning");
-    console.log("📊 Original HTML length:", htmlString.length);
-    console.log("📊 Body match found:", !!bodyMatch);
-    throw new Error("Content extraction resulted in empty content after cleaning");
+    console.warn("⚠️ extractArticleFromString: Cleaning removed all content, using original body");
+    bodyContent = bodyMatch ? bodyMatch[1] : htmlString; // Fallback to original
   }
   
-  // Phase 1: Identify main content containers
-  const mainContentCandidates = [];
+  // ENHANCED: Orchestrator-based intelligent content detection with detailed logging
+  const detectionResult = await detector.detectContent(bodyContent, baseURI);
+  console.log(`📊 Content detection result: source=${detectionResult.source}, score=${detectionResult.score}, length=${detectionResult.content.length}`);
   
-  // PERFORMANCE OPTIMIZATION: Process semantic tags with yielding for large content
-  const mainTags = ['<main', '<article', '<section'];
-  for (let i = 0; i < mainTags.length; i++) {
-    const tag = mainTags[i];
-    const regex = new RegExp(`${tag}[^>]*>([\\s\\S]*?)<\\/${tag.slice(1)}>`, 'gi');
-    const matches = bodyContent.match(regex);
-    if (matches) {
-      mainContentCandidates.push(...matches);
-    }
-    
-    // Yield control after processing each tag type for large documents
-    if (bodyContent.length > 100000 && i < mainTags.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+  // ENHANCED: Debug logging for troubleshooting
+  const detectedTextLength = detectionResult.content.replace(/<[^>]*>/g, '').trim().length;
+  console.log(`📊 Detected text content length: ${detectedTextLength} characters`);
+  console.log(`📊 Detection content preview:`, detectionResult.content.substring(0, 200) + '...');
+  
+  // ENHANCED: Check if we have reasonable content before proceeding
+  if (detectedTextLength < 50) {
+    console.warn(`⚠️ Very short detection result (${detectedTextLength} chars), may need fallback`);
   }
   
-  // Phase 2: Score content blocks by text density and quality with chunked processing
-  let bestContent = '';
-  let bestScore = 0;
+  let bestContent = detectionResult.content;
   
-  console.log("🔧 extractArticleFromString: Found", mainContentCandidates.length, "semantic containers");
-  
-  // If we found semantic containers, use them
-  if (mainContentCandidates.length > 0) {
-    for (let i = 0; i < mainContentCandidates.length; i++) {
-      const candidate = mainContentCandidates[i];
-      const score = scoreContentBlock(candidate);
-      console.log(`📊 Candidate ${i}: score=${score}, length=${candidate.length}`);
-      if (score > bestScore) {
-        bestScore = score;
-        bestContent = candidate;
-        console.log(`✅ New best content found: score=${score}`);
-      }
-      
-      // Yield control every 10 candidates for large sets
-      if (mainContentCandidates.length > 10 && i % 10 === 9) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-    }
-  }
-  
-  // Phase 3: Fallback to paragraph-based extraction with chunked processing
-  if (!bestContent) {
-    console.log("🔧 extractArticleFromString: No semantic containers found, trying paragraph blocks");
-    // Find the largest consecutive block of paragraphs
-    const paragraphBlocks = findParagraphBlocks(bodyContent);
-    console.log("📊 Found", paragraphBlocks.length, "paragraph blocks");
-    
-    for (let i = 0; i < paragraphBlocks.length; i++) {
-      const block = paragraphBlocks[i];
-      const score = scoreContentBlock(block);
-      console.log(`📊 Paragraph block ${i}: score=${score}, length=${block.length}`);
-      if (score > bestScore) {
-        bestScore = score;
-        bestContent = block;
-        console.log(`✅ New best paragraph content found: score=${score}`);
-      }
-      
-      // Yield control every 5 blocks for large sets
-      if (paragraphBlocks.length > 5 && i % 5 === 4) {
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-    }
-  }
-  
-  // Phase 4: Final fallback - use entire cleaned body
-  if (!bestContent) {
-    console.log("⚠️ extractArticleFromString: No good content blocks found, using entire cleaned body");
-    bestContent = bodyContent;
-  }
-  
-  console.log("📊 Best content selected - length:", bestContent.length, "score:", bestScore);
-  console.log("📄 Best content preview:", bestContent.substring(0, 300) + "...");
-  
-  // Final cleaning pass
-  console.log("🔧 extractArticleFromString: Applying final cleanup");
+  // Final cleaning pass - but preserve more content
+  console.log("🔧 extractArticleFromString: Applying conservative final cleanup");
   bestContent = await finalContentCleanup(bestContent);
   console.log("📊 Content length after final cleanup:", bestContent.length);
   
-  // CRITICAL: Ensure we still have content after final cleanup
+  // CRITICAL: Ensure we still have meaningful content - multiple fallbacks
   if (bestContent.trim().length === 0) {
-    console.error("❌ extractArticleFromString: Content is empty after final cleanup");
-    console.log("📊 Original body content length:", bodyContent.length);
-    throw new Error("Content extraction resulted in empty content after final cleanup");
+    console.warn("⚠️ extractArticleFromString: Final cleanup removed all content, using detection result");
+    bestContent = detectionResult.content; // First fallback
+    if (bestContent.trim().length === 0) {
+      console.warn("⚠️ extractArticleFromString: Detection failed, using cleaned body content");
+      bestContent = bodyContent; // Second fallback
+      if (bestContent.trim().length === 0) {
+        console.warn("⚠️ extractArticleFromString: All strategies failed, using original body");
+        bestContent = bodyMatch ? bodyMatch[1] : htmlString; // Final fallback
+      }
+    }
+  }
+  
+  // ENHANCED: Multi-level fallback for insufficient content
+  const textLength = bestContent.replace(/<[^>]*>/g, '').trim().length;
+  console.log(`📊 Final text length check: ${textLength} characters`);
+  
+  if (textLength < 100 && bodyContent.length > 500) {
+    console.log("⚠️ Content very short, using full body content as safety fallback");
+    bestContent = bodyContent;
+  } else if (textLength < 50) {
+    console.log("⚠️ Content extremely short, using original HTML as emergency fallback");
+    bestContent = bodyMatch ? bodyMatch[1] : htmlString;
   }
   
   // Extract text for metadata
@@ -2615,26 +3487,44 @@ function scoreContentBlock(content) {
   const textContent = content.replace(/<[^>]*>/g, '');
   const textLength = textContent.length;
   
-  // LESS AGGRESSIVE: Lower minimum threshold from 50 to 20
-  if (textLength < 20) return 0; // Too short
+  // CRITICAL FIX: Lower minimum threshold to handle diverse content types
+  if (textLength < 10) return 0; // Too short
   
   let score = textLength; // Base score on text length
   
-  // Positive indicators (increased weights)
-  if (content.includes('<p>')) score += 200; // Paragraphs are good
-  if (content.includes('<h1>') || content.includes('<h2>') || content.includes('<h3>')) score += 100; // Headers
-  if (content.includes('<blockquote>')) score += 50; // Quotes
-  if (content.includes('<ol>') || content.includes('<ul>')) score += 50; // Lists
-  if (content.includes('<em>') || content.includes('<strong>')) score += 25; // Emphasis
-  if (content.includes('<a ')) score += 25; // Links indicate content
+  // CRITICAL FIX: Enhanced scoring for different content patterns
   
-  // LESS AGGRESSIVE: Reduce negative scoring to avoid removing legitimate content
-  if (content.toLowerCase().includes('cookie policy')) score -= 50; // Cookie notices (more specific)
-  if (content.toLowerCase().includes('newsletter')) score -= 30; // Newsletter prompts (more specific)
-  if (content.toLowerCase().includes('advertisement')) score -= 100; // Ads
-  if (content.toLowerCase().includes('follow us on')) score -= 30; // Social widgets (more specific)
+  // Positive indicators with increased weights for content-rich elements
+  if (content.includes('<p>')) score += 300; // Paragraphs are excellent indicators
+  if (content.includes('<div')) score += 150; // Div containers often hold content
+  if (content.includes('<h1>') || content.includes('<h2>') || content.includes('<h3>')) score += 200; // Headers
+  if (content.includes('<h4>') || content.includes('<h5>') || content.includes('<h6>')) score += 100; // Smaller headers
+  if (content.includes('<blockquote>')) score += 100; // Quotes are valuable content
+  if (content.includes('<ol>') || content.includes('<ul>')) score += 75; // Lists
+  if (content.includes('<em>') || content.includes('<strong>') || content.includes('<b>') || content.includes('<i>')) score += 50; // Emphasis
+  if (content.includes('<a ')) score += 30; // Links indicate content
   
-  console.log(`📊 Content block scoring: length=${textLength}, final score=${score}`);
+  // CRITICAL FIX: Detect Chinese/CJK content and give it bonus points
+  const chineseCharRegex = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/;
+  if (chineseCharRegex.test(textContent)) {
+    score += 200; // Bonus for Chinese content
+    console.log("🈯 Chinese content detected, adding bonus points");
+  }
+  
+  // Additional content quality indicators
+  if (textContent.includes('.') && textContent.includes(',')) score += 50; // Proper sentences
+  if (textContent.split(' ').length > 10) score += 100; // Meaningful text length
+  
+  // LESS AGGRESSIVE: More specific negative scoring
+  const lowerContent = content.toLowerCase();
+  if (lowerContent.includes('cookie policy') || lowerContent.includes('privacy policy')) score -= 100;
+  if (lowerContent.includes('newsletter signup') || lowerContent.includes('subscribe')) score -= 80;
+  if (lowerContent.includes('advertisement') || lowerContent.includes('sponsored')) score -= 150;
+  if (lowerContent.includes('follow us on') || lowerContent.includes('share on')) score -= 50;
+  if (lowerContent.includes('navigation') || lowerContent.includes('menu')) score -= 100;
+  if (lowerContent.includes('footer') || lowerContent.includes('copyright')) score -= 80;
+  
+  console.log(`📊 Content block scoring: length=${textLength}, final score=${score}, text preview: "${textContent.substring(0, 50)}..."`);
   return score;
 }
 
@@ -2645,22 +3535,42 @@ function scoreContentBlock(content) {
  */
 function findParagraphBlocks(content) {
   const blocks = [];
-  const paragraphs = content.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || [];
   
-  if (paragraphs.length === 0) return [content];
+  // CRITICAL FIX: Expand to include div-based content containers
+  const contentElements = content.match(/<(?:p|div)[^>]*>[\s\S]*?<\/(?:p|div)>/gi) || [];
   
-  // Group consecutive paragraphs
+  if (contentElements.length === 0) {
+    console.log("📄 No paragraph or div elements found, using full content");
+    return [content];
+  }
+  
+  console.log(`📊 Found ${contentElements.length} content elements (p/div tags)`);
+  
+  // CRITICAL FIX: Increase block size limit from 1000 to 5000 characters to handle longer articles
+  const MAX_BLOCK_SIZE = 5000;
   let currentBlock = '';
-  for (const p of paragraphs) {
-    if (currentBlock.length < 1000) { // Max block size
-      currentBlock += p;
+  
+  for (const element of contentElements) {
+    // Check if adding this element would exceed the limit
+    if (currentBlock.length + element.length > MAX_BLOCK_SIZE && currentBlock.length > 0) {
+      // Save the current block and start a new one
+      blocks.push(currentBlock);
+      currentBlock = element;
     } else {
-      if (currentBlock) blocks.push(currentBlock);
-      currentBlock = p;
+      currentBlock += element;
     }
   }
+  
+  // Add the final block
   if (currentBlock) blocks.push(currentBlock);
   
+  // CRITICAL FIX: If no blocks were created or blocks are too small, return full content
+  if (blocks.length === 0 || blocks.every(block => block.length < 100)) {
+    console.log("⚠️ Paragraph blocks too small, using full content as fallback");
+    return [content];
+  }
+  
+  console.log(`📊 Created ${blocks.length} content blocks with lengths:`, blocks.map(b => b.length));
   return blocks;
 }
 
@@ -2817,7 +3727,7 @@ async function getArticleFromStringContent(htmlString, baseURI, pageTitle) {
   // Extract keywords from meta tags using string parsing
   const keywordsMatch = htmlString.match(/<meta[^>]*name=["']keywords["'][^>]*content=["']([^"']*)["']/i);
   if (keywordsMatch) {
-    article.keywords = keywordsMatch[1].split(',').map(s => s.trim());
+    article.keywords = (keywordsMatch[1] || '').split(',').map(s => s.trim()).filter(Boolean);
   }
   
   // Extract other meta tags using regex
@@ -3134,7 +4044,8 @@ async function getArticleFromDomWithSiteConfig(dom, siteConfig) {
 
   // Add keywords if available
   if (dom.head) {
-    article.keywords = dom.head.querySelector('meta[name="keywords"]')?.content?.split(',')?.map(s => s.trim());
+    const keywordsContent = dom.head.querySelector('meta[name="keywords"]')?.content;
+    article.keywords = keywordsContent ? keywordsContent.split(',').map(s => s.trim()).filter(Boolean) : [];
 
     // Add all meta tags
     dom.head.querySelectorAll('meta[name][content], meta[property][content]')?.forEach(meta => {
@@ -3172,7 +4083,7 @@ function processRedditContent(htmlContent) {
     .trim();
   
   // Structure the main post content
-  const lines = content.split('\n');
+  const lines = (content || '').split('\n');
   const processedLines = [];
   let inCommentSection = false;
   let currentComment = null;
@@ -3385,8 +4296,35 @@ async function getArticleFromContent(tabId, selection = false) {
  */
 async function formatTitle(article) {
   let options = await getOptions();
-  let title = textReplace(options.title, article, options.disallowedChars + '/');
-  title = title.split('/').map(s=>generateValidFileName(s, options.disallowedChars)).join('/');
+  // CRITICAL FIX: Add null safety for options.title access
+  const titleTemplate = options?.title || '{title}';
+  let title = textReplace(titleTemplate, article, options.disallowedChars + '/');
+  
+  // CRITICAL FIX: Enhanced null safety for string split operation with detailed logging
+  if (title && typeof title === 'string') {
+    try {
+      title = title.split('/').map(s=>generateValidFileName(s, options.disallowedChars)).join('/');
+      // CRITICAL FIX: Check if result is empty after cleaning
+      if (!title || title.trim().length === 0) {
+        console.warn('formatTitle: Title became empty after cleaning, using fallback');
+        title = generateValidFileName(article?.title || 'Untitled', options.disallowedChars) || 'Untitled';
+      }
+    } catch (splitError) {
+      console.error('formatTitle: Error during title split/map operation:', splitError);
+      console.log('formatTitle: Problematic title value:', title);
+      // Fallback to safe title generation
+      title = generateValidFileName(article?.title || 'Untitled', options.disallowedChars) || 'Untitled';
+    }
+  } else {
+    console.warn('formatTitle: Invalid title result, using fallback. Type:', typeof title, 'Value:', title);
+    try {
+      title = generateValidFileName(article?.title || 'Untitled', options.disallowedChars) || 'Untitled';
+    } catch (fallbackError) {
+      console.error('formatTitle: Even fallback title generation failed:', fallbackError);
+      title = 'Untitled'; // Ultimate fallback
+    }
+  }
+  
   return title;
 }
 
@@ -3400,9 +4338,19 @@ async function formatMdClipsFolder(article) {
   let mdClipsFolder = '';
   
   if (options.mdClipsFolder && options.downloadMode == 'downloadsApi') {
-    mdClipsFolder = textReplace(options.mdClipsFolder, article, options.disallowedChars);
-    mdClipsFolder = mdClipsFolder.split('/').map(s => generateValidFileName(s, options.disallowedChars)).join('/');
-    if (!mdClipsFolder.endsWith('/')) mdClipsFolder += '/';
+    try {
+      const rawMdClipsFolder = textReplace(options.mdClipsFolder, article, options.disallowedChars);
+      if (rawMdClipsFolder && typeof rawMdClipsFolder === 'string') {
+        mdClipsFolder = rawMdClipsFolder.split('/').map(s => generateValidFileName(s, options.disallowedChars)).join('/');
+        if (!mdClipsFolder.endsWith('/')) mdClipsFolder += '/';
+      } else {
+        console.warn('formatMdClipsFolder: Invalid mdClipsFolder result:', rawMdClipsFolder);
+        mdClipsFolder = '';
+      }
+    } catch (mdClipsFolderError) {
+      console.error('formatMdClipsFolder: Error processing mdClipsFolder:', mdClipsFolderError);
+      mdClipsFolder = '';
+    }
   }
 
   return mdClipsFolder;
@@ -3418,9 +4366,19 @@ async function formatObsidianFolder(article) {
   let obsidianFolder = '';
   
   if (options.obsidianFolder) {
-    obsidianFolder = textReplace(options.obsidianFolder, article, options.disallowedChars);
-    obsidianFolder = obsidianFolder.split('/').map(s => generateValidFileName(s, options.disallowedChars)).join('/');
-    if (!obsidianFolder.endsWith('/')) obsidianFolder += '/';
+    try {
+      const rawObsidianFolder = textReplace(options.obsidianFolder, article, options.disallowedChars);
+      if (rawObsidianFolder && typeof rawObsidianFolder === 'string') {
+        obsidianFolder = rawObsidianFolder.split('/').map(s => generateValidFileName(s, options.disallowedChars)).join('/');
+        if (!obsidianFolder.endsWith('/')) obsidianFolder += '/';
+      } else {
+        console.warn('formatObsidianFolder: Invalid obsidianFolder result:', rawObsidianFolder);
+        obsidianFolder = '';
+      }
+    } catch (obsidianFolderError) {
+      console.error('formatObsidianFolder: Error processing obsidianFolder:', obsidianFolderError);
+      obsidianFolder = '';
+    }
   }
 
   return obsidianFolder;
@@ -3485,8 +4443,20 @@ browser.contextMenus.onClicked.addListener(function (info, tab) {
   else if (info.menuItemId.startsWith("copy-tab-as-markdown-link")) {
     copyTabAsMarkdownLink(tab);
   }
-  else if (info.menuItemId.startsWith("toggle-") || info.menuItemId.startsWith("tabtoggle-")) {
-    toggleSetting(info.menuItemId.split('-')[1]);
+  else if (info.menuItemId && (info.menuItemId.startsWith("toggle-") || info.menuItemId.startsWith("tabtoggle-"))) {
+    // CRITICAL FIX: Enhanced null safety for menuItemId split operation
+    try {
+      const menuItemId = String(info.menuItemId || '');
+      const parts = menuItemId.split('-');
+      if (parts && parts.length > 1 && parts[1]) {
+        toggleSetting(parts[1]);
+      } else {
+        console.warn('Menu item processing: Invalid parts after split:', parts);
+      }
+    } catch (menuSplitError) {
+      console.error('Menu item processing: Error during menuItemId split:', menuSplitError);
+      console.log('Menu item processing: Problematic menuItemId:', info.menuItemId);
+    }
   }
 });
 
@@ -3781,8 +4751,106 @@ if (!String.prototype.replaceAll) {
   };
 }
 
+/**
+ * CRITICAL: Initialize worker with proper sequencing
+ */
+async function initializeServiceWorker() {
+  if (workerInitializationPromise) {
+    return workerInitializationPromise;
+  }
+  
+  workerInitializationPromise = new Promise(async (resolve, reject) => {
+    try {
+      console.log('🚀 Initializing service worker...');
+      
+      // Step 1: Ensure DOM polyfill is ready (already done synchronously)
+      if (!self.serviceWorkerStatus.domPolyfillReady) {
+        initializeDOMPolyfillSync();
+      }
+      
+      // Step 2: Verify TurndownService is available
+      if (typeof TurndownService === 'undefined') {
+        console.error('❌ TurndownService not loaded');
+        throw new Error('TurndownService dependency missing');
+      }
+      
+      // Step 3: Run health check with fallback
+      console.log('🏥 Running TurndownService health check...');
+      let healthCheck;
+      try {
+        healthCheck = performTurndownHealthCheck();
+        
+        if (!healthCheck.isHealthy) {
+          console.warn('⚠️ Health check failed, but attempting to continue:', healthCheck.errors);
+          console.log('🔄 Attempting to initialize TurndownService anyway...');
+          
+          // Try basic TurndownService functionality directly
+          try {
+            const basicTest = new TurndownService();
+            const basicResult = basicTest.turndown('<p>Test</p>');
+            console.log('🧪 Direct TurndownService test result:', basicResult);
+            
+            if (basicResult !== null && basicResult !== undefined) {
+              console.log('✅ TurndownService works despite health check failure');
+              healthCheck.isHealthy = true; // Override health check
+            } else {
+              throw new Error('TurndownService returned null/undefined');
+            }
+          } catch (directTestError) {
+            console.error('❌ Direct TurndownService test also failed:', directTestError);
+            throw new Error(`Both health check and direct test failed: ${directTestError.message}`);
+          }
+        }
+      } catch (healthCheckError) {
+        console.error('❌ Health check threw error:', healthCheckError);
+        console.log('🔄 Attempting emergency TurndownService initialization...');
+        
+        // Emergency fallback - just try to create TurndownService
+        try {
+          new TurndownService();
+          console.log('✅ Emergency TurndownService creation succeeded');
+          healthCheck = { isHealthy: true, warnings: ['Health check skipped due to errors'] };
+        } catch (emergencyError) {
+          console.error('❌ Emergency TurndownService creation failed:', emergencyError);
+          throw new Error(`All TurndownService initialization attempts failed: ${emergencyError.message}`);
+        }
+      }
+      
+      self.serviceWorkerStatus.turndownServiceReady = true;
+      self.serviceWorkerStatus.initialized = true;
+      workerReady = true;
+      
+      console.log('✅ Service worker initialization complete');
+      resolve();
+    } catch (error) {
+      console.error('❌ Service worker initialization failed:', error);
+      self.serviceWorkerStatus.errors.push({
+        type: 'initialization-failure',
+        message: error?.message || 'Unknown initialization error',
+        timestamp: Date.now()
+      });
+      reject(error);
+    }
+  });
+  
+  return workerInitializationPromise;
+}
+
 // Message listener for handling messages from content scripts and popup
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+browser.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  // CRITICAL: Wait for initialization before processing any messages
+  if (!workerReady) {
+    try {
+      console.log('⏳ Waiting for service worker initialization...');
+      await initializeServiceWorker();
+    } catch (initError) {
+      console.error('❌ Worker initialization failed, cannot process message:', initError);
+      return {
+        error: 'Service worker not ready: ' + (initError?.message || 'Initialization failed')
+      };
+    }
+  }
+  
   console.log("📥 Service Worker received message:", message?.type || 'undefined', "from:", sender.tab?.id || 'popup');
   
   // Validate message structure

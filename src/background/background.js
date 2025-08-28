@@ -499,8 +499,11 @@ async function downloadMarkdown(markdown, title, tabId, imageList = {}, mdClipsF
     try {
       await ensureScripts(tabId);
       const filename = mdClipsFolder + generateValidFileName(title, options.disallowedChars) + ".md";
-      const code = `downloadMarkdown("${filename}","${base64EncodeUnicode(markdown)}");`
-      await browser.tabs.executeScript(tabId, {code: code});
+      await browser.scripting.executeScript({
+        target: { tabId: tabId },
+        func: (filename, content) => downloadMarkdown(filename, content),
+        args: [filename, base64EncodeUnicode(markdown)]
+      });
     }
     catch (error) {
       // This could happen if the extension is not allowed to run code in
@@ -661,12 +664,18 @@ async function toggleSetting(setting, options = null) {
 
 // this function ensures the content script is loaded (and loads it if it isn't)
 async function ensureScripts(tabId) {
-  const results = await browser.tabs.executeScript(tabId, { code: "typeof getSelectionAndDom === 'function';" })
+  const results = await browser.scripting.executeScript({
+    target: { tabId: tabId },
+    func: () => typeof getSelectionAndDom === 'function'
+  });
   // The content script's last expression will be true if the function
   // has been defined. If this is not the case, then we need to run
   // pageScraper.js to define function getSelectionAndDom.
-  if (!results || results[0] !== true) {
-    await browser.tabs.executeScript(tabId, {file: "/contentScript/contentScript.js"});
+  if (!results || results[0].result !== true) {
+    await browser.scripting.executeScript({
+      target: { tabId: tabId },
+      files: ["/contentScript/contentScript.js"]
+    });
   }
 }
 
@@ -800,16 +809,19 @@ async function getArticleFromDom(domString) {
 // `selection` is a bool indicating whether we should just get the selected text
 async function getArticleFromContent(tabId, selection = false) {
   // run the content script function to get the details
-  const results = await browser.tabs.executeScript(tabId, { code: "getSelectionAndDom()" });
+  const results = await browser.scripting.executeScript({
+    target: { tabId: tabId },
+    func: () => getSelectionAndDom()
+  });
 
   // make sure we actually got a valid result
-  if (results && results[0] && results[0].dom) {
-    const article = await getArticleFromDom(results[0].dom, selection);
+  if (results && results[0] && results[0].result && results[0].result.dom) {
+    const article = await getArticleFromDom(results[0].result.dom, selection);
 
     // if we're to grab the selection, and we've selected something,
     // replace the article content with the selection
-    if (selection && results[0].selection) {
-      article.content = results[0].selection;
+    if (selection && results[0].result.selection) {
+      article.content = results[0].result.selection;
     }
 
     //return the article
@@ -871,7 +883,11 @@ async function copyTabAsMarkdownLink(tab) {
     await ensureScripts(tab.id);
     const article = await getArticleFromContent(tab.id);
     const title = await formatTitle(article);
-    await browser.tabs.executeScript(tab.id, { code: `copyToClipboard("[${title}](${article.baseURI})")` });
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (title, url) => copyToClipboard(`[${title}](${url})`),
+      args: [title, article.baseURI]
+    });
     // await navigator.clipboard.writeText(`[${title}](${article.baseURI})`);
   }
   catch (error) {
@@ -900,7 +916,11 @@ async function copyTabAsMarkdownLinkAll(tab) {
     };
     
     const markdown = links.join(`\n`)
-    await browser.tabs.executeScript(tab.id, { code: `copyToClipboard(${JSON.stringify(markdown)})` });
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (markdown) => copyToClipboard(markdown),
+      args: [markdown]
+    });
 
   }
   catch (error) {
@@ -930,7 +950,11 @@ async function copySelectedTabAsMarkdownLink(tab) {
     };
 
     const markdown = links.join(`\n`)
-    await browser.tabs.executeScript(tab.id, { code: `copyToClipboard(${JSON.stringify(markdown)})` });
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (markdown) => copyToClipboard(markdown),
+      args: [markdown]
+    });
 
   }
   catch (error) {
@@ -958,10 +982,18 @@ async function copyMarkdownFromContext(info, tab) {
       options.frontmatter = options.backmatter = '';
       const article = await getArticleFromContent(tab.id, false);
       const { markdown } = turndown(`<a href="${info.linkUrl}">${info.linkText || info.selectionText}</a>`, { ...options, downloadImages: false }, article);
-      await browser.tabs.executeScript(tab.id, {code: `copyToClipboard(${JSON.stringify(markdown)})`});
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (markdown) => copyToClipboard(markdown),
+        args: [markdown]
+      });
     }
     else if (info.menuItemId == "copy-markdown-image") {
-      await browser.tabs.executeScript(tab.id, {code: `copyToClipboard("![](${info.srcUrl})")`});
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (url) => copyToClipboard(`![](${url})`),
+        args: [info.srcUrl]
+      });
     }
     else if(info.menuItemId == "copy-markdown-obsidian") {
       const article = await getArticleFromContent(tab.id, info.menuItemId == "copy-markdown-obsidian");
@@ -970,7 +1002,11 @@ async function copyMarkdownFromContext(info, tab) {
       const obsidianVault = options.obsidianVault;
       const obsidianFolder = await formatObsidianFolder(article);
       const { markdown } = await convertArticleToMarkdown(article, downloadImages = false);
-      await browser.tabs.executeScript(tab.id, { code: `copyToClipboard(${JSON.stringify(markdown)})` });
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (markdown) => copyToClipboard(markdown),
+        args: [markdown]
+      });
       await chrome.tabs.update({url: "obsidian://advanced-uri?vault=" + obsidianVault + "&clipboard=true&mode=new&filepath=" + obsidianFolder + generateValidFileName(title)});
     }
     else if(info.menuItemId == "copy-markdown-obsall") {
@@ -980,13 +1016,21 @@ async function copyMarkdownFromContext(info, tab) {
       const obsidianVault = options.obsidianVault;
       const obsidianFolder = await formatObsidianFolder(article);
       const { markdown } = await convertArticleToMarkdown(article, downloadImages = false);
-      await browser.tabs.executeScript(tab.id, { code: `copyToClipboard(${JSON.stringify(markdown)})` });
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (markdown) => copyToClipboard(markdown),
+        args: [markdown]
+      });
       await browser.tabs.update({url: "obsidian://advanced-uri?vault=" + obsidianVault + "&clipboard=true&mode=new&filepath=" + obsidianFolder + generateValidFileName(title)});
     }
     else {
       const article = await getArticleFromContent(tab.id, info.menuItemId == "copy-markdown-selection");
       const { markdown } = await convertArticleToMarkdown(article, downloadImages = false);
-      await browser.tabs.executeScript(tab.id, { code: `copyToClipboard(${JSON.stringify(markdown)})` });
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (markdown) => copyToClipboard(markdown),
+        args: [markdown]
+      });
     }
   }
   catch (error) {

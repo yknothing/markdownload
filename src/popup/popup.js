@@ -1,4 +1,10 @@
 
+// MV3 Scripting API polyfill - ensure browser.scripting works
+if (typeof browser !== 'undefined' && !browser.scripting && typeof chrome !== 'undefined' && chrome.scripting) {
+  browser.scripting = chrome.scripting;
+  console.log("✅ Added scripting API polyfill to browser object in popup");
+}
+
 // default variables
 var selectedText = null;
 var imageList = null;
@@ -97,14 +103,16 @@ const showOrHideClipOption = selection => {
 }
 
 const clipSite = id => {
-    return browser.tabs.executeScript(id, { code: "getSelectionAndDom()" })
-        .then((result) => {
-            if (result && result[0]) {
-                showOrHideClipOption(result[0].selection);
+    return browser.scripting.executeScript({
+        target: { tabId: id },
+        func: () => getSelectionAndDom()
+    }).then((result) => {
+            if (result && result[0] && result[0].result) {
+                showOrHideClipOption(result[0].result.selection);
                 let message = {
                     type: "clip",
-                    dom: result[0].dom,
-                    selection: result[0].selection
+                    dom: result[0].result.dom,
+                    selection: result[0].result.selection
                 }
                 return browser.storage.sync.get(defaultOptions).then(options => {
                     browser.runtime.sendMessage({
@@ -157,12 +165,14 @@ browser.storage.sync.get(defaultOptions).then(options => {
 }).then((tabs) => {
     var id = tabs[0].id;
     var url = tabs[0].url;
-    browser.tabs.executeScript(id, {
-        file: "/browser-polyfill.min.js"
+    browser.scripting.executeScript({
+        target: { tabId: id },
+        files: ["/browser-polyfill.min.js"]
     })
     .then(() => {
-        return browser.tabs.executeScript(id, {
-            file: "/contentScript/contentScript.js"
+        return browser.scripting.executeScript({
+            target: { tabId: id },
+            files: ["/contentScript/contentScript.js"]
         });
     }).then( () => {
         console.info("Successfully injected MarkDownload content script");
@@ -216,13 +226,26 @@ async function downloadSelection(e) {
 function notify(message) {
     // message for displaying markdown
     if (message.type == "display.md") {
+        // CRITICAL FIX: Handle both success and error cases
+        if (message.error) {
+            // Show error message instead of markdown
+            showError(message.error);
+            return;
+        }
 
-        // set the values from the message
-        //document.getElementById("md").value = message.markdown;
-        cm.setValue(message.markdown);
-        document.getElementById("title").value = message.article.title;
-        imageList = message.imageList;
-        mdClipsFolder = message.mdClipsFolder;
+        // CRITICAL FIX: Add null safety for message properties  
+        if (message.markdown) {
+            cm.setValue(message.markdown);
+        } else {
+            cm.setValue("No content available");
+        }
+        
+        // CRITICAL FIX: Safe title access with fallback
+        const title = message.title || (message.article && message.article.title) || "Untitled";
+        document.getElementById("title").value = title;
+        
+        imageList = message.imageList || {};
+        mdClipsFolder = message.mdClipsFolder || "";
         
         // show the hidden elements
         document.getElementById("container").style.display = 'flex';

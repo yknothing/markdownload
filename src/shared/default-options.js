@@ -30,12 +30,40 @@ const defaultOptions = {
 
 // function to get the options from storage and substitute default options if it fails
 async function getOptions() {
-  let options = defaultOptions;
+  let options = {...defaultOptions}; // Create a copy to avoid mutation
   try {
-    options = await browser.storage.sync.get(defaultOptions);
+    const storedOptions = await browser.storage.sync.get(defaultOptions);
+    // CRITICAL FIX: Enhanced null safety for options merging
+    if (storedOptions && typeof storedOptions === 'object') {
+      options = {...defaultOptions, ...storedOptions};
+      
+      // Ensure critical string properties are never null/undefined
+      if (!options.title || typeof options.title !== 'string') {
+        console.warn('getOptions: Invalid title option, using default');
+        options.title = defaultOptions.title;
+      }
+      
+      if (!options.disallowedChars || typeof options.disallowedChars !== 'string') {
+        console.warn('getOptions: Invalid disallowedChars option, using default');
+        options.disallowedChars = defaultOptions.disallowedChars;
+      }
+      
+    } else {
+      console.warn('getOptions: Invalid stored options, using defaults');
+    }
   } catch (err) {
-    console.error(err);
+    console.error('getOptions: Failed to load from storage:', err);
+    self.serviceWorkerStatus?.errors?.push({
+      type: 'options-load-error',
+      message: err.message,
+      timestamp: Date.now()
+    });
   }
-  if (!browser.downloads) options.downloadMode = 'contentLink';
+  
+  // Fallback check for browser compatibility
+  if (!browser?.downloads) {
+    options.downloadMode = 'contentLink';
+  }
+  
   return options;
 }
