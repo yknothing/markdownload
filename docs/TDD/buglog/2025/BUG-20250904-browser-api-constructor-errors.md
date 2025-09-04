@@ -23,6 +23,12 @@ BrowserStorageAdapter等API适配器类应能正常实例化和使用。
 TypeError: BrowserStorageAdapter is not a constructor
 ```
 
+经过进一步调查发现：
+1. 测试试图从 `src/shared/browser-api-adapters.js` 导入适配器类，但该文件不存在
+2. 实际的浏览器API代码位于 `src/background/api/browser-api.js`
+3. 该文件使用函数式而非面向对象的架构，没有导出适配器类
+4. 测试期望的面向对象适配器架构与实际实现不匹配
+
 ## 影响范围
 - 受影响路径/文件：
   - `src/background/api/browser-api.js` 或相关API模块

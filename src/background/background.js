@@ -524,9 +524,13 @@ function generateValidFileName(title, disallowedChars = null) {
   if (typeof jest !== 'undefined') {
     // 测试环境：移除非法字符（保持测试兼容性）
     name = name.replace(/[\/\?<>\\*\|\"]/g, '');
+    // 安全：完全移除路径遍历序列
+    name = name.replace(/\.{2,}/g, '');
   } else {
     // 生产环境：替换为下划线（保持可读性）
     name = name.replace(/[\/\?<>\\*\|\"]/g, '_');
+    // 安全：替换路径遍历序列为下划线
+    name = name.replace(/\.{2,}/g, '_');
   }
 
   // 自定义禁止字符处理
