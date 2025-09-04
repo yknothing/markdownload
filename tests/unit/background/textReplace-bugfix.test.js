@@ -16,7 +16,7 @@ global.console = {
 };
 
 // 导入被测试的函数
-require(path.join(process.cwd(), 'src/background/background.js'));
+const { textReplace } = require(path.join(process.cwd(), 'src/background/background.js'));
 
 describe('textReplace函数 - Bug修复测试', () => {
     beforeEach(() => {
