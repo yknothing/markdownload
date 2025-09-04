@@ -1,0 +1,330 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 3.4.1)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  validate-release:
+    name: Validate Release Readiness
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract-version.outputs.version }}
+      is-prerelease: ${{ steps.release-type.outputs.prerelease }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: extract-version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Determine release type
+        id: release-type
+        run: |
+          VERSION=${{ steps.extract-version.outputs.version }}
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ] || [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "This is a pre-release"
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "This is a stable release"
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run quality gates
+        run: |
+          echo "Running comprehensive quality validation..."
+          npm run test:ci
+          
+          # Validate package.json version matches release version
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          RELEASE_VERSION=${{ steps.extract-version.outputs.version }}
+          
+          if [ "$PACKAGE_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "❌ Package version ($PACKAGE_VERSION) doesn't match release version ($RELEASE_VERSION)"
+            exit 1
+          fi
+          
+          echo "✅ Version validation passed"
+
+      - name: Security scan for release
+        run: |
+          echo "Running security scan for release..."
+          npm audit --audit-level moderate --json > security-report.json || true
+          
+          CRITICAL=$(cat security-report.json | jq '.metadata.vulnerabilities.critical // 0')
+          HIGH=$(cat security-report.json | jq '.metadata.vulnerabilities.high // 0')
+          
+          if [ $CRITICAL -gt 0 ] || [ $HIGH -gt 0 ]; then
+            echo "❌ Critical ($CRITICAL) or high ($HIGH) severity vulnerabilities found"
+            npm audit
+            exit 1
+          fi
+          
+          echo "✅ Security scan passed"
+
+  build-artifacts:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: validate-release
+    strategy:
+      matrix:
+        target: [chrome, firefox, safari]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd src && npm ci
+
+      - name: Build extension for ${{ matrix.target }}
+        run: |
+          cd src
+          echo "Building extension for ${{ matrix.target }}..."
+          
+          # Modify manifest for specific browsers if needed
+          case "${{ matrix.target }}" in
+            chrome)
+              echo "Building for Chrome/Chromium browsers"
+              npm run build
+              ;;
+            firefox)
+              echo "Building for Firefox"
+              npm run build
+              ;;
+            safari)
+              echo "Building for Safari"
+              # Safari builds are handled separately via Xcode
+              npm run build
+              ;;
+          esac
+
+      - name: Package extension
+        run: |
+          cd src
+          VERSION=${{ needs.validate-release.outputs.version }}
+          
+          # Rename artifacts with version and target
+          if [ -f "web-ext-artifacts/"*.zip ]; then
+            ORIGINAL_FILE=$(ls web-ext-artifacts/*.zip | head -1)
+            NEW_NAME="markdownload-v$VERSION-${{ matrix.target }}.zip"
+            mv "$ORIGINAL_FILE" "web-ext-artifacts/$NEW_NAME"
+            echo "Created: $NEW_NAME"
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-${{ matrix.target }}-${{ needs.validate-release.outputs.version }}
+          path: src/web-ext-artifacts/
+          retention-days: 90
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-artifacts]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          VERSION=${{ needs.validate-release.outputs.version }}
+          echo "Generating release notes for version $VERSION"
+          
+          # Extract changelog section for this version
+          cat > release-notes.md << EOF
+          # MarkDownload v$VERSION
+          
+          ## What's New
+          
+          This release includes various improvements and bug fixes.
+          
+          ## Installation
+          
+          ### Browser Extension Stores
+          - **Chrome Web Store**: [Install from Chrome Web Store](https://chrome.google.com/webstore/detail/markdownload-markdown-web/pcmpcfapbekmbjjkdalcgopdkipoggdi)
+          - **Firefox Add-ons**: [Install from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/markdownload/)
+          - **Edge Add-ons**: [Install from Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/markdownload-markdown-w/hajanaajapkhaabfcofdjgjnlgkdkknm)
+          
+          ### Manual Installation
+          Download the appropriate .zip file for your browser and install manually in developer mode.
+          
+          ## Files
+          - \`markdownload-v$VERSION-chrome.zip\` - For Chrome and Chromium-based browsers
+          - \`markdownload-v$VERSION-firefox.zip\` - For Firefox
+          - \`markdownload-v$VERSION-safari.zip\` - For Safari (may require additional steps)
+          
+          ## Technical Details
+          - **Version**: $VERSION
+          - **Build Date**: $(date -u)
+          - **Commit**: ${{ github.sha }}
+          
+          ## Support
+          If you encounter any issues, please report them on our [GitHub Issues](https://github.com/deathau/markdownload/issues) page.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.validate-release.outputs.version) }}
+          name: MarkDownload v${{ needs.validate-release.outputs.version }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.validate-release.outputs.is-prerelease }}
+          files: |
+            release-artifacts/**/*.zip
+          generate_release_notes: true
+          draft: false
+
+  publish-stores:
+    name: Publish to Extension Stores
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: needs.validate-release.outputs.is-prerelease == 'false'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Chrome extension
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-chrome-${{ needs.validate-release.outputs.version }}
+          path: chrome-extension/
+
+      - name: Download Firefox extension
+        uses: actions/download-artifact@v4
+        with:
+          name: extension-firefox-${{ needs.validate-release.outputs.version }}
+          path: firefox-extension/
+
+      - name: Publish to Chrome Web Store
+        if: env.CHROME_EXTENSION_ID != ''
+        run: |
+          echo "🚀 Publishing to Chrome Web Store..."
+          # This would require Chrome Web Store API credentials
+          # For now, we'll just prepare the package
+          echo "Chrome extension ready for manual upload"
+          ls -la chrome-extension/
+        env:
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+
+      - name: Publish to Firefox Add-ons
+        if: env.FIREFOX_JWT_ISSUER != ''
+        run: |
+          echo "🚀 Publishing to Firefox Add-ons..."
+          # This would require Firefox Add-ons API credentials
+          # For now, we'll just prepare the package
+          echo "Firefox extension ready for manual upload"
+          ls -la firefox-extension/
+        env:
+          FIREFOX_JWT_ISSUER: ${{ secrets.FIREFOX_JWT_ISSUER }}
+          FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
+
+      - name: Notify deployment success
+        run: |
+          echo "✅ Release v${{ needs.validate-release.outputs.version }} completed successfully!"
+          echo "Manual steps may be required for store publications."
+
+  post-release:
+    name: Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: always() && needs.create-release.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update development version
+        if: needs.validate-release.outputs.is-prerelease == 'false'
+        run: |
+          echo "Preparing next development version..."
+          CURRENT_VERSION=${{ needs.validate-release.outputs.version }}
+          
+          # This would typically bump to next patch version + "-dev"
+          echo "Current version: $CURRENT_VERSION"
+          echo "Next development version preparation would happen here"
+
+      - name: Create release summary
+        run: |
+          cat > release-summary.md << EOF
+          # Release Summary: v${{ needs.validate-release.outputs.version }}
+          
+          **Status**: ✅ SUCCESS
+          **Type**: ${{ needs.validate-release.outputs.is-prerelease == 'true' && 'Pre-release' || 'Stable Release' }}
+          **Date**: $(date -u)
+          
+          ## Artifacts Created
+          - GitHub Release with extension packages
+          - Chrome extension package
+          - Firefox extension package
+          - Safari extension package
+          
+          ## Next Steps
+          - Monitor for any user-reported issues
+          - Prepare store submissions if not automated
+          - Update documentation if needed
+          EOF
+
+      - name: Upload release summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-summary-${{ needs.validate-release.outputs.version }}
+          path: release-summary.md
+          retention-days: 365

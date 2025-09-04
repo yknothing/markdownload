@@ -1,4 +1,59 @@
 # Changelog
+
+## Unreleased
+### 封装与可维护性优化（服务工作线程与核心工具）
+- 优化 background.js 中的关键工具函数并补充中文注释：
+  - validateUri：支持相对/协议相对解析，保持绝对 URL 原样（不强制编码空格）；相对路径通过 URL 归一化后仅对空格做解码，避免破坏其他字符的安全性。
+  - getImageFilename：统一图片命名策略，data: URL 按 MIME 推断扩展名（image_<时间戳>.ext），普通 URL 去除查询参数后取末段文件名，统一经 generateValidFileName 清洗。
+  - textReplace：增强模板替换能力，支持 {date:FORMAT}、{keywords[:分隔符]}、{domain}、大小写/命名风格转换与转义花括号（\{...\}）。
+  - generateValidFileName：非法字符与自定义禁用字符统一替换为下划线，处理前后导点、Windows 保留名、空值回退与保留扩展名的长度截断逻辑。
+- 增强 createMenus() 调用安全性：测试与受限环境下未注入实现时自动跳过，避免 require 过程报错。
+
+### 已知问题（本次未完全修复）
+- generateValidFileName 在单测 case “preserve file extension when truncating” 中的期望与通用策略存在冲突（测试期望长度固定为 255，但输入长度为 253）；已记录待沟通策略（是否需要强行填充至 255）。
+- 部分 default-options 与集成测试失败与本次封装优化无直接关联，后续在不改变既有行为的前提下再做对齐与完善。
+
+## 4.0.0 (2024-12-28)
+### 🎉 Major Version Release
+- **Complete Architecture Refactoring**: Migrated from monolithic to modular architecture following SOLID principles
+- **Enhanced Service Worker**: Implemented clean separation of concerns with specialized modules
+- **Improved Error Handling**: Added comprehensive error boundaries and recovery mechanisms
+- **Security Enhancements**: Implemented HTML sanitization, URL validation, and secure content processing
+- **Testing Infrastructure**: Added comprehensive unit, integration, and E2E test suites
+- **Dependency Injection**: Implemented clean module management and lifecycle handling
+- **Code Quality**: Applied clean code principles, eliminated code smells, and improved maintainability
+- **Performance Optimizations**: Enhanced module loading and resource management
+- **Developer Experience**: Improved debugging, logging, and development workflow
+
+### 🔧 Technical Improvements
+- **Modular Architecture**: Split service worker into specialized modules (LifecycleManager, MessageQueueManager, DownloadProcessor, etc.)
+- **Configuration Management**: Centralized all constants and settings in dedicated config module
+- **Browser API Abstractions**: Enhanced browser API compatibility and error handling
+- **Content Processing**: Improved HTML parsing, content extraction, and markdown conversion
+- **Image Handling**: Enhanced image download and processing capabilities
+- **Template System**: Improved front/back matter template processing
+- **File Management**: Enhanced filename sanitization and conflict resolution
+
+### 🛡️ Security & Reliability
+- **HTML Sanitization**: Added comprehensive input cleaning to prevent XSS attacks
+- **URL Validation**: Implemented secure URL validation with dangerous protocol blocking
+- **Code Injection Prevention**: Replaced dynamic code execution with safe API calls
+- **Error Recovery**: Added graceful degradation and fallback mechanisms
+- **Input Validation**: Enhanced validation for all user inputs and configuration
+
+### 🧪 Quality Assurance
+- **Unit Tests**: Added comprehensive unit test coverage for all modules
+- **Integration Tests**: Implemented end-to-end workflow testing
+- **E2E Tests**: Added browser automation tests for critical user flows
+- **Test Infrastructure**: Built robust testing framework with mocks and fixtures
+- **CI/CD Integration**: Enhanced build and deployment pipeline
+
+### 📚 Documentation
+- **Architecture Documentation**: Added detailed architecture overview and design principles
+- **Code Comments**: Comprehensive JSDoc documentation for all public APIs
+- **Developer Guide**: Enhanced development setup and contribution guidelines
+- **API Reference**: Complete API documentation for extension development
+
 ## 3.4.0
 - Fixed extra spaces in titles which could cause issues (thanks @rickdoesdev !)
 - Fixed an issue with image paths in some circumstances (thanks @rickdoesdev !)

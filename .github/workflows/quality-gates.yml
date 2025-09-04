@@ -1,0 +1,244 @@
+name: Quality Gates
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+  schedule:
+    # Run quality checks daily at 6 AM UTC
+    - cron: '0 6 * * *'
+
+env:
+  QUALITY_THRESHOLD_COVERAGE: 85
+  QUALITY_THRESHOLD_PASS_RATE: 95
+  QUALITY_THRESHOLD_PERFORMANCE: 300000 # 5 minutes max test time
+
+jobs:
+  quality-assessment:
+    name: Quality Assessment
+    runs-on: ubuntu-latest
+    outputs:
+      quality-score: ${{ steps.calculate-quality.outputs.score }}
+      coverage-percentage: ${{ steps.coverage-check.outputs.percentage }}
+      pass-rate: ${{ steps.test-results.outputs.pass-rate }}
+      performance-score: ${{ steps.performance-check.outputs.score }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run comprehensive test suite
+        run: |
+          echo "Running comprehensive test suite..."
+          START_TIME=$(date +%s)
+          npm run test:ci || echo "Some tests failed, continuing analysis..."
+          END_TIME=$(date +%s)
+          EXECUTION_TIME=$((END_TIME - START_TIME))
+          echo "EXECUTION_TIME=$EXECUTION_TIME" >> $GITHUB_ENV
+
+      - name: Analyze test results
+        id: test-results
+        run: |
+          if [ -f "coverage/test-analysis.json" ]; then
+            PASS_RATE=$(node -e "
+              const analysis = require('./coverage/test-analysis.json');
+              console.log(analysis.summary.passRate);
+            ")
+            echo "pass-rate=$PASS_RATE" >> $GITHUB_OUTPUT
+            echo "Test pass rate: $PASS_RATE%"
+          else
+            echo "pass-rate=0" >> $GITHUB_OUTPUT
+            echo "❌ Test analysis file not found"
+          fi
+
+      - name: Check coverage thresholds
+        id: coverage-check
+        run: |
+          if [ -f "coverage/coverage-final.json" ]; then
+            COVERAGE_PERCENTAGE=$(node -e "
+              const coverage = require('./coverage/coverage-final.json');
+              const files = Object.values(coverage);
+              const totals = files.reduce((acc, file) => ({
+                lines: acc.lines + file.l.found,
+                linesCovered: acc.linesCovered + file.l.hit,
+                statements: acc.statements + file.s.found,
+                statementsCovered: acc.statementsCovered + Object.values(file.s).reduce((sum, count) => sum + (count > 0 ? 1 : 0), 0),
+                functions: acc.functions + file.f.found,
+                functionsCovered: acc.functionsCovered + Object.values(file.f).reduce((sum, count) => sum + (count > 0 ? 1 : 0), 0),
+                branches: acc.branches + file.b.found,
+                branchesCovered: acc.branchesCovered + Object.values(file.b).reduce((sum, branch) => sum + branch.reduce((branchSum, hit) => branchSum + (hit > 0 ? 1 : 0), 0), 0)
+              }), { lines: 0, linesCovered: 0, statements: 0, statementsCovered: 0, functions: 0, functionsCovered: 0, branches: 0, branchesCovered: 0 });
+              
+              const linesCoverage = totals.lines > 0 ? (totals.linesCovered / totals.lines * 100) : 0;
+              console.log(Math.round(linesCoverage * 100) / 100);
+            ")
+            
+            echo "percentage=$COVERAGE_PERCENTAGE" >> $GITHUB_OUTPUT
+            echo "Coverage: $COVERAGE_PERCENTAGE%"
+            
+            # Check if coverage meets threshold
+            if (( $(echo "$COVERAGE_PERCENTAGE >= $QUALITY_THRESHOLD_COVERAGE" | bc -l) )); then
+              echo "✅ Coverage $COVERAGE_PERCENTAGE% meets threshold $QUALITY_THRESHOLD_COVERAGE%"
+            else
+              echo "❌ Coverage $COVERAGE_PERCENTAGE% below threshold $QUALITY_THRESHOLD_COVERAGE%"
+              echo "COVERAGE_FAILED=true" >> $GITHUB_ENV
+            fi
+          else
+            echo "percentage=0" >> $GITHUB_OUTPUT
+            echo "❌ Coverage file not found"
+            echo "COVERAGE_FAILED=true" >> $GITHUB_ENV
+          fi
+
+      - name: Performance analysis
+        id: performance-check
+        run: |
+          EXECUTION_TIME=${{ env.EXECUTION_TIME }}
+          echo "Test execution time: ${EXECUTION_TIME}s"
+          
+          if [ $EXECUTION_TIME -gt $QUALITY_THRESHOLD_PERFORMANCE ]; then
+            PERFORMANCE_SCORE=50
+            echo "❌ Test execution time ${EXECUTION_TIME}s exceeds threshold ${QUALITY_THRESHOLD_PERFORMANCE}s"
+          elif [ $EXECUTION_TIME -gt $((QUALITY_THRESHOLD_PERFORMANCE / 2)) ]; then
+            PERFORMANCE_SCORE=75
+            echo "⚠️ Test execution time ${EXECUTION_TIME}s is concerning"
+          else
+            PERFORMANCE_SCORE=100
+            echo "✅ Test execution time ${EXECUTION_TIME}s is acceptable"
+          fi
+          
+          echo "score=$PERFORMANCE_SCORE" >> $GITHUB_OUTPUT
+
+      - name: Calculate overall quality score
+        id: calculate-quality
+        run: |
+          PASS_RATE=${{ steps.test-results.outputs.pass-rate }}
+          COVERAGE_PERCENTAGE=${{ steps.coverage-check.outputs.percentage }}
+          PERFORMANCE_SCORE=${{ steps.performance-check.outputs.score }}
+          
+          # Weighted quality score calculation
+          # Pass rate: 40% weight, Coverage: 35% weight, Performance: 25% weight
+          QUALITY_SCORE=$(echo "scale=2; ($PASS_RATE * 0.4) + ($COVERAGE_PERCENTAGE * 0.35) + ($PERFORMANCE_SCORE * 0.25)" | bc)
+          
+          echo "score=$QUALITY_SCORE" >> $GITHUB_OUTPUT
+          echo "Overall quality score: $QUALITY_SCORE"
+          
+          # Determine quality grade
+          if (( $(echo "$QUALITY_SCORE >= 90" | bc -l) )); then
+            echo "🌟 EXCELLENT quality (A+)"
+            echo "QUALITY_GRADE=A+" >> $GITHUB_ENV
+          elif (( $(echo "$QUALITY_SCORE >= 80" | bc -l) )); then
+            echo "✅ GOOD quality (A)"
+            echo "QUALITY_GRADE=A" >> $GITHUB_ENV
+          elif (( $(echo "$QUALITY_SCORE >= 70" | bc -l) )); then
+            echo "⚠️ ACCEPTABLE quality (B)"
+            echo "QUALITY_GRADE=B" >> $GITHUB_ENV
+          elif (( $(echo "$QUALITY_SCORE >= 60" | bc -l) )); then
+            echo "🔶 NEEDS IMPROVEMENT (C)"
+            echo "QUALITY_GRADE=C" >> $GITHUB_ENV
+          else
+            echo "❌ CRITICAL issues (F)"
+            echo "QUALITY_GRADE=F" >> $GITHUB_ENV
+          fi
+
+      - name: Generate quality report
+        run: |
+          cat > quality-report.md << EOF
+          # Quality Assessment Report
+          
+          **Generated**: $(date -u)
+          **Branch**: ${{ github.ref_name }}
+          **Commit**: ${{ github.sha }}
+          
+          ## Overall Quality Score: ${{ steps.calculate-quality.outputs.score }}/100 (Grade: ${{ env.QUALITY_GRADE }})
+          
+          ### Metrics Breakdown
+          - **Test Pass Rate**: ${{ steps.test-results.outputs.pass-rate }}% (Target: ≥${{ env.QUALITY_THRESHOLD_PASS_RATE }}%)
+          - **Code Coverage**: ${{ steps.coverage-check.outputs.percentage }}% (Target: ≥${{ env.QUALITY_THRESHOLD_COVERAGE }}%)
+          - **Performance Score**: ${{ steps.performance-check.outputs.score }}/100
+          - **Execution Time**: ${{ env.EXECUTION_TIME }}s
+          
+          ### Quality Gates Status
+          $([ "${{ env.COVERAGE_FAILED }}" = "true" ] && echo "❌ Coverage gate: FAILED" || echo "✅ Coverage gate: PASSED")
+          $([ "${{ steps.test-results.outputs.pass-rate }}" -lt "${{ env.QUALITY_THRESHOLD_PASS_RATE }}" ] && echo "❌ Pass rate gate: FAILED" || echo "✅ Pass rate gate: PASSED")
+          $([ "${{ env.EXECUTION_TIME }}" -gt "${{ env.QUALITY_THRESHOLD_PERFORMANCE }}" ] && echo "❌ Performance gate: FAILED" || echo "✅ Performance gate: PASSED")
+          
+          ### Recommendations
+          EOF
+          
+          # Add specific recommendations based on scores
+          PASS_RATE=${{ steps.test-results.outputs.pass-rate }}
+          COVERAGE=${{ steps.coverage-check.outputs.percentage }}
+          
+          if (( $(echo "$PASS_RATE < 95" | bc -l) )); then
+            echo "- 🔍 Investigate and fix failing tests to improve pass rate" >> quality-report.md
+          fi
+          
+          if (( $(echo "$COVERAGE < $QUALITY_THRESHOLD_COVERAGE" | bc -l) )); then
+            echo "- 📊 Add more test coverage, especially for critical paths" >> quality-report.md
+          fi
+          
+          if [ "${{ env.EXECUTION_TIME }}" -gt 180 ]; then
+            echo "- ⚡ Optimize slow tests to improve execution time" >> quality-report.md
+          fi
+          
+          if [ "${{ env.QUALITY_GRADE }}" = "F" ] || [ "${{ env.QUALITY_GRADE }}" = "C" ]; then
+            echo "- 🚨 Immediate attention required - quality below acceptable standards" >> quality-report.md
+          fi
+
+      - name: Comment quality report on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('quality-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+      - name: Upload quality artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-assessment-${{ github.run_number }}
+          path: |
+            quality-report.md
+            coverage/
+          retention-days: 30
+
+      - name: Fail job if quality gates not met
+        run: |
+          QUALITY_SCORE=${{ steps.calculate-quality.outputs.score }}
+          
+          if (( $(echo "$QUALITY_SCORE < 60" | bc -l) )); then
+            echo "❌ Quality score $QUALITY_SCORE is below minimum threshold (60)"
+            exit 1
+          fi
+          
+          if [ "${{ env.COVERAGE_FAILED }}" = "true" ]; then
+            echo "❌ Coverage gate failed"
+            exit 1
+          fi
+          
+          PASS_RATE=${{ steps.test-results.outputs.pass-rate }}
+          if (( $(echo "$PASS_RATE < $QUALITY_THRESHOLD_PASS_RATE" | bc -l) )); then
+            echo "❌ Pass rate $PASS_RATE% is below threshold $QUALITY_THRESHOLD_PASS_RATE%"
+            exit 1
+          fi
+          
+          echo "✅ All quality gates passed!"

@@ -1,5 +1,104 @@
-web-ext-artifacts
-xcode/MarkDownload - Markdown Web Clipper/MarkDownload - Markdown Web Clipper.xcodeproj/project.xcworkspace
-xcode/MarkDownload - Markdown Web Clipper/MarkDownload - Markdown Web Clipper.xcodeproj/xcuserdata
+# =====================================================
+# MarkDownload - Browser Extension .gitignore
+# =====================================================
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs and artifacts
+dist/
+build/
+out/
+web-ext-artifacts/
+**/web-ext-artifacts/
+*.zip
+*.xpi
+
+# Testing and coverage
+coverage/
+.nyc_output/
+.jest-cache/
+coverage-final.json
+coverage.lcov
+*.coverage
+*.lcov
+*.clover
+cobertura-coverage.xml
+test-results/
+test-reports/
+playwright-report/
+test-artifacts/
+temp/
+temp-*/
+
+# Logs and debug files
+*.log
+*.test.log
+test-logs/
+debug-logs/
+performance-logs/
+logs/
+*.debug
+
+# Environment and configuration
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# OS generated files
 .DS_Store
-node_modules
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Temporary files and directories
+/tmp/
+/tmp/markdownload-tests/
+temp-test-files/
+test-temp/
+mock-data-temp/
+analysis-reports/
+reports/
+performance-reports/
+security-reports/
+quality-reports/
+coverage-reports/
+
+# Debug and test files
+debug-*.js
+test-*.js
+test-*.html
+*-debug.js
+*-test.js
+*-fix.js
+
+# Browser extension specific
+browser-profiles/
+extension-artifacts/
+test-extensions/
+
+# CI/CD artifacts
+.github/workflows/.coverage/
+
+# Backup files
+*.backup
+*.bak
+*.orig
+*.old

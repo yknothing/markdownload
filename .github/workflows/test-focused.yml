@@ -1,0 +1,129 @@
+name: Focused Test Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-pattern:
+        description: 'Test pattern to run (e.g., "unit", "integration", "*.test.js")'
+        required: false
+        default: ''
+      coverage-threshold:
+        description: 'Coverage threshold percentage'
+        required: false
+        default: '85'
+      max-workers:
+        description: 'Maximum number of test workers'
+        required: false
+        default: '50%'
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  focused-tests:
+    name: Focused Test Execution
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run focused tests
+        run: |
+          TEST_PATTERN="${{ github.event.inputs.test-pattern }}"
+          COVERAGE_THRESHOLD="${{ github.event.inputs.coverage-threshold }}"
+          MAX_WORKERS="${{ github.event.inputs.max-workers }}"
+          
+          echo "Running tests with pattern: ${TEST_PATTERN:-'all tests'}"
+          echo "Coverage threshold: ${COVERAGE_THRESHOLD}%"
+          echo "Max workers: ${MAX_WORKERS}"
+          
+          if [ -n "$TEST_PATTERN" ]; then
+            npm test -- --testPathPattern="$TEST_PATTERN" --coverage --maxWorkers="$MAX_WORKERS"
+          else
+            npm run test:coverage -- --maxWorkers="$MAX_WORKERS"
+          fi
+
+      - name: Generate detailed test report
+        if: always()
+        run: |
+          echo "=== Test Execution Summary ===" > test-summary.md
+          echo "" >> test-summary.md
+          echo "**Execution Details:**" >> test-summary.md
+          echo "- Pattern: ${{ github.event.inputs.test-pattern || 'All tests' }}" >> test-summary.md
+          echo "- Coverage Threshold: ${{ github.event.inputs.coverage-threshold }}%" >> test-summary.md
+          echo "- Max Workers: ${{ github.event.inputs.max-workers }}" >> test-summary.md
+          echo "- Timestamp: $(date -u)" >> test-summary.md
+          echo "" >> test-summary.md
+          
+          if [ -f "coverage/lcov-report/index.html" ]; then
+            echo "Coverage report generated successfully" >> test-summary.md
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-test-results
+          path: |
+            coverage/
+            test-summary.md
+          retention-days: 7
+
+  performance-analysis:
+    name: Test Performance Analysis  
+    runs-on: ubuntu-latest
+    needs: focused-tests
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Analyze test performance
+        run: |
+          echo "=== Test Performance Analysis ===" > performance-analysis.md
+          echo "" >> performance-analysis.md
+          
+          # Run tests with timing information
+          START_TIME=$(date +%s%3N)
+          npm test -- --verbose --silent 2>&1 | grep -E "(PASS|FAIL|Time:|Test Suites:)" > test-timing.log || true
+          END_TIME=$(date +%s%3N)
+          TOTAL_TIME=$((END_TIME - START_TIME))
+          
+          echo "**Overall Performance:**" >> performance-analysis.md
+          echo "- Total execution time: ${TOTAL_TIME}ms" >> performance-analysis.md
+          echo "- Timestamp: $(date -u)" >> performance-analysis.md
+          echo "" >> performance-analysis.md
+          
+          echo "**Test Timing Details:**" >> performance-analysis.md
+          echo '```' >> performance-analysis.md
+          cat test-timing.log >> performance-analysis.md
+          echo '```' >> performance-analysis.md
+
+      - name: Upload performance analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-analysis
+          path: |
+            performance-analysis.md
+            test-timing.log
+          retention-days: 7
