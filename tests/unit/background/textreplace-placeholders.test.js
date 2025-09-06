@@ -5,33 +5,20 @@
 
 const { textReplace } = require('../../../src/background/background.js');
 const { createTestEnvironment } = require('../../utils/testHelpers.js');
+const { setupUnifiedDateMocks, resetDateMocks } = require('../../mocks/dateMocks.js');
 
 // Set up environment configuration
 const testEnv = createTestEnvironment();
 
-// Mock moment for consistent date testing
-const mockMoment = jest.fn();
-mockMoment.mockReturnValue({
-  format: jest.fn((fmt) => {
-    const formatMap = {
-      'YYYY': '2024',
-      'MM': '01', 
-      'DD': '15',
-      'HH': '10',
-      'mm': '30',
-      'ss': '00',
-      'YYYY-MM-DD': '2024-01-15',
-      'YYYY-MM-DDTHH:mm:ss': '2024-01-15T10:30:00',
-      'dddd, MMMM Do YYYY': 'Monday, January 15th 2024',
-      'MMMM YYYY': 'January 2024',
-      'MMM D, YYYY': 'Jan 15, 2024'
-    };
-    return formatMap[fmt] || '2024-01-15';
-  })
-});
-global.moment = mockMoment;
-
 describe('textReplace Comprehensive Placeholder Matrix', () => {
+  beforeAll(() => {
+    // Use unified date mocking system
+    setupUnifiedDateMocks();
+  });
+
+  afterAll(() => {
+    resetDateMocks();
+  });
   const sampleArticle = {
     pageTitle: 'Sample Article Title',
     title: 'Article Title', 

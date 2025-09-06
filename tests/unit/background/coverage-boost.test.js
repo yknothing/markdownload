@@ -4,6 +4,7 @@
  */
 
 const { setupTestEnvironment, resetTestEnvironment } = require('../../utils/testHelpers.js');
+const { setupUnifiedDateMocks, resetDateMocks } = require('../../mocks/dateMocks.js');
 
 // Import functions from background.js
 const {
@@ -109,26 +110,26 @@ describe('Background Coverage Boost', () => {
       date: new Date('2024-01-15T10:30:00Z')
     };
 
+    beforeEach(() => {
+      // Use unified date mocking system
+      setupUnifiedDateMocks({
+        customFormats: {
+          'YYYY-MM-DD': '2024-01-15',
+          'YYYY-MM-DDTHH:mm:ss': '2024-01-15T10:30:00'
+        }
+      });
+    });
+
+    afterEach(() => {
+      resetDateMocks();
+    });
+
     test('should handle YYYY-MM-DD date format', () => {
-      // Mock moment for date formatting
-      const mockMoment = {
-        format: jest.fn((fmt) => {
-          if (fmt === 'YYYY-MM-DD') return '2024-01-15';
-          return '2024-01-15T10:30:00';
-        })
-      };
-      global.moment = jest.fn(() => mockMoment);
-      
       const result = textReplace('{date:YYYY-MM-DD}', mockArticle);
       expect(result).toContain('2024-01-15');
     });
 
     test('should handle YYYY-MM-DDTHH:mm:ss date format', () => {
-      const mockMoment = {
-        format: jest.fn((fmt) => '2024-01-15T10:30:00')
-      };
-      global.moment = jest.fn(() => mockMoment);
-      
       const result = textReplace('{date:YYYY-MM-DDTHH:mm:ss}', mockArticle);
       expect(result).toContain('2024-01-15T10:30:00');
     });

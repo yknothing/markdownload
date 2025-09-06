@@ -1,3 +1,4 @@
+const { setupUnifiedDateMocks, resetDateMocks } = require("../../mocks/dateMocks.js");
 /**
  * High-Impact Tests for Background Script Core Functions
  * 
@@ -734,16 +735,17 @@ describe('Background Script - Core Functions (High Impact)', () => {
       });
 
       test('should handle date replacements', () => {
-        // Mock moment if not already done
-        global.moment = jest.fn(() => ({
-          format: jest.fn((format) => {
-            if (format === 'YYYY-MM-DD') return '2024-01-01';
-            return '2024-01-01';
-          })
-        }));
+        // Use unified date mocking system
+        setupUnifiedDateMocks({
+          customFormats: {
+            'YYYY-MM-DD': '2024-01-01'
+          }
+        });
 
         const result = textReplace('Date: {date:YYYY-MM-DD}', article);
         expect(result).toBe('Date: 2024-01-01');
+        
+        resetDateMocks();
       });
 
       test('should handle keywords with custom separators', () => {
