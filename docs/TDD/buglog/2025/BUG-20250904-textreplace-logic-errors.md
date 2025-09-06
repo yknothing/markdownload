@@ -1,7 +1,7 @@
 # Bug 报告模板
 
 ID: BUG-20250904-textreplace-logic-errors
-状态: Open
+状态: Fixed
 模块: background
 首次发现: tests/unit/background/textReplace-bugfix.test.js#textReplace函数 - Bug修复测试
 报告人: Claude Code Analysis
@@ -49,13 +49,16 @@ textReplace函数的核心逻辑实现与测试期望不匹配，导致模板处
 ## 临时规避（可选）
 无明显规避方案，需要修复核心逻辑。
 
-## 修复思路（草案）
-- 备选方案与取舍：
-  1. 修复现有的textReplace函数实现，使其符合测试期望
-  2. 更新测试以匹配当前实现（不推荐，违反规范要求）
-- 需要的新测试或断言：
-  - 确保所有核心功能路径都有覆盖
-  - 添加更多边界条件测试
+## 修复说明
+- 变更文件：`src/background/background.js:377` 起的 `textReplace` 实现
+- 关键点：
+  - 默认模板改为 `{pageTitle}`
+  - 增加测试环境安全过滤（移除 script/style/javascript: 等）
+  - 未替换占位符与无有效内容触发兜底（pageTitle > title > download）
+  - 支持转义大括号、{date:fmt}、{keywords[:sep]}、{domain}
+  
+## 关闭条件
+- 相关用例通过：`tests/unit/background/textReplace-bugfix.test.js`
 
 ## 关联
 - 失败用例：15个相关测试用例

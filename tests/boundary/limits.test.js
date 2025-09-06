@@ -1,5 +1,6 @@
 /**
  * Stress and Limits Test Suite for MarkDownload
+ * REFACTORED: Using real business logic functions from background.js
  * 
  * Tests system behavior under extreme load conditions, resource constraints,
  * and performance limits to ensure stability and graceful degradation.
@@ -17,7 +18,12 @@ const {
 } = require('../config/boundary-constants');
 
 const testHelpers = require('../utils/testHelpers');
-const { convertArticleToMarkdown } = require('../../src/background/background.js');
+const {
+  turndown,
+  convertArticleToMarkdown,
+  generateValidFileName,
+  textReplace
+} = require('../../src/background/background.js');
 
 // Performance monitoring utilities
 const performanceMonitor = {
@@ -56,21 +62,7 @@ afterEach(() => {
 
 describe('💪 Stress Tests - Large Volume Processing', () => {
   
-  // Load MarkDownload functions
-  let turndown, convertArticleToMarkdown, generateValidFileName;
-  
-  beforeAll(() => {
-    try {
-      const backgroundModule = testHelpers.loadSourceModule('background/background.js');
-      turndown = backgroundModule.turndown || testHelpers.mockTurndown;
-      convertArticleToMarkdown = backgroundModule.convertArticleToMarkdown || testHelpers.mockConvertArticleToMarkdown;
-      generateValidFileName = backgroundModule.generateValidFileName || testHelpers.mockGenerateValidFileName;
-    } catch (error) {
-      turndown = testHelpers.mockTurndown;
-      convertArticleToMarkdown = testHelpers.mockConvertArticleToMarkdown;
-      generateValidFileName = testHelpers.mockGenerateValidFileName;
-    }
-  });
+  // Real business logic functions are imported at module level
 
   describe('Large Document Processing', () => {
     test('should process small document within performance target', async () => {
@@ -485,17 +477,7 @@ describe('⚡ Stress Tests - Network and I/O Limits', () => {
 
 describe('🎯 Stress Tests - Template Processing Limits', () => {
   
-  // Mock textReplace function
-  let textReplace;
-  
-  beforeAll(() => {
-    try {
-      const backgroundModule = testHelpers.loadSourceModule('background/background.js');
-      textReplace = backgroundModule.textReplace || testHelpers.mockTextReplace;
-    } catch (error) {
-      textReplace = testHelpers.mockTextReplace;
-    }
-  });
+  // Real business logic functions are imported at module level
 
   describe('Template Complexity Stress', () => {
     test('should handle maximum template variables', () => {

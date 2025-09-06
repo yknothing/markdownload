@@ -1,5 +1,6 @@
 /**
  * Security Boundaries Test Suite for MarkDownload
+ * REFACTORED: Using real business logic functions from background.js
  * 
  * Tests security-critical boundary conditions including XSS prevention,
  * path traversal protection, content sanitization, and input validation.
@@ -15,6 +16,12 @@ const {
 } = require('../config/boundary-constants');
 
 const testHelpers = require('../utils/testHelpers');
+const {
+  generateValidFileName,
+  turndown,
+  textReplace,
+  convertArticleToMarkdown
+} = require('../../src/background/background.js');
 
 // Security test utilities
 const securityUtils = {
@@ -38,21 +45,7 @@ afterEach(() => {
 
 describe('🔒 Security Boundaries - Input Sanitization', () => {
   
-  // Load MarkDownload functions
-  let generateValidFileName, turndown, textReplace;
-  
-  beforeAll(() => {
-    try {
-      const backgroundModule = testHelpers.loadSourceModule('background/background.js');
-      generateValidFileName = backgroundModule.generateValidFileName || testHelpers.mockGenerateValidFileName;
-      turndown = backgroundModule.turndown || testHelpers.mockTurndown;
-      textReplace = backgroundModule.textReplace || testHelpers.mockTextReplace;
-    } catch (error) {
-      generateValidFileName = testHelpers.mockGenerateValidFileName;
-      turndown = testHelpers.mockTurndown;
-      textReplace = testHelpers.mockTextReplace;
-    }
-  });
+  // Real business logic functions are imported at module level
 
   describe('XSS Prevention Tests', () => {
     EDGE_CASES.XSS_PAYLOADS.forEach((payload, index) => {

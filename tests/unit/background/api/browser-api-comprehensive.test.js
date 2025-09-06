@@ -1,666 +1,780 @@
 /**
- * Comprehensive Browser API Tests - Phase 2 Coverage
+ * Comprehensive Browser API Test Suite
+ * Targets 85%+ branch coverage for src/background/api/browser-api.js
  * 
- * This test suite covers browser API factory integration and configuration:
- * - Browser API factory instantiation scenarios
- * - Storage API integration and error handling
- * - Downloads API availability and fallback logic
- * - Cross-environment compatibility
- * - Configuration persistence and validation
+ * Coverage Strategy:
+ * 1. API availability checks (true/false branches) 
+ * 2. Error handling paths (success/failure branches)
+ * 3. Timeout and retry scenarios
+ * 4. Browser polyfill scenarios
+ * 5. Security validation branches
  */
 
-const path = require('path');
+describe('Browser API Comprehensive Coverage', () => {
+  let browserAPIModule;
+  let mockBrowser;
+  let mockChrome;
+  let originalBrowser;
+  let originalChrome;
 
-// Mock browser APIs
-require('jest-webextension-mock');
-
-describe('Browser API Factory - Comprehensive Integration Tests', () => {
-  let BrowserApiFactory;
-  let browserApiAdapters;
-  let browserApiInterfaces;
-
-  beforeAll(() => {
-    try {
-      // Load browser API modules
-      const factoryPath = path.resolve(__dirname, '../../../../src/shared/browser-api-factory.js');
-      const adaptersPath = path.resolve(__dirname, '../../../../src/shared/browser-api-adapters.js');
-      const interfacesPath = path.resolve(__dirname, '../../../../src/shared/browser-api-interfaces.js');
-
-      // Clear require cache
-      delete require.cache[factoryPath];
-      delete require.cache[adaptersPath];
-      delete require.cache[interfacesPath];
-
-      // Mock the factory execution context
-      const fs = require('fs');
-      
-      // Load and execute browser-api-factory
-      const factoryCode = fs.readFileSync(factoryPath, 'utf8');
-      const factoryContext = {
-        console: console,
-        browser: global.browser,
-        require: require,
-        module: { exports: {} },
-        exports: {}
-      };
-
-      const vm = require('vm');
-      vm.createContext(factoryContext);
-      vm.runInContext(factoryCode, factoryContext);
-      
-      BrowserApiFactory = factoryContext.module.exports || factoryContext.BrowserApiFactory;
-
-      // Load adapters for testing
-      browserApiAdapters = require(adaptersPath);
-      browserApiInterfaces = require(interfacesPath);
-
-    } catch (error) {
-      console.warn('Could not load browser API modules:', error.message);
-      BrowserApiFactory = null;
-    }
-  });
-
-  describe('BrowserApiFactory Instantiation and Singleton Behavior', () => {
-    test('should create singleton instance correctly', () => {
-      if (!BrowserApiFactory) return;
-
-      const instance1 = BrowserApiFactory.getInstance();
-      const instance2 = BrowserApiFactory.getInstance();
-
-      expect(instance1).toBeDefined();
-      expect(instance1).toBe(instance2); // Singleton behavior
-      expect(typeof instance1.getStorageApi).toBe('function');
-      expect(typeof instance1.getDownloadsApi).toBe('function');
-    });
-
-    test('should handle multiple environment scenarios', () => {
-      if (!BrowserApiFactory) return;
-
-      // Test Chrome/Chromium environment
-      global.chrome = {
-        runtime: { id: 'test-extension' },
-        storage: { sync: { get: jest.fn(), set: jest.fn() } },
-        downloads: { download: jest.fn() }
-      };
-
-      const chromeInstance = BrowserApiFactory.getInstance();
-      expect(chromeInstance).toBeDefined();
-
-      // Test Firefox environment
-      delete global.chrome;
-      global.browser = {
-        runtime: { id: 'test-extension' },
-        storage: { sync: { get: jest.fn(), set: jest.fn() } },
-        downloads: { download: jest.fn() }
-      };
-
-      const firefoxInstance = BrowserApiFactory.getInstance();
-      expect(firefoxInstance).toBeDefined();
-    });
-
-    test('should handle missing browser API gracefully', () => {
-      if (!BrowserApiFactory) return;
-
-      const originalChrome = global.chrome;
-      const originalBrowser = global.browser;
-
-      try {
-        delete global.chrome;
-        delete global.browser;
-
-        // Should still create instance with fallbacks
-        const instance = BrowserApiFactory.getInstance();
-        expect(instance).toBeDefined();
-        expect(typeof instance.getStorageApi).toBe('function');
-        expect(typeof instance.getDownloadsApi).toBe('function');
-
-      } finally {
-        global.chrome = originalChrome;
-        global.browser = originalBrowser;
+  beforeEach(() => {
+    // Store originals
+    originalBrowser = global.browser;
+    originalChrome = global.chrome;
+    
+    // Create comprehensive mocks
+    mockBrowser = {
+      downloads: {
+        download: jest.fn(),
+        search: jest.fn(), 
+        onChanged: {
+          addListener: jest.fn(),
+          removeListener: jest.fn()
+        }
+      },
+      scripting: {
+        executeScript: jest.fn()
+      },
+      tabs: {
+        query: jest.fn(),
+        get: jest.fn(),
+        sendMessage: jest.fn()
+      },
+      storage: {
+        sync: {
+          get: jest.fn(),
+          set: jest.fn()
+        }
+      },
+      runtime: {
+        onMessage: {
+          addListener: jest.fn(),
+          removeListener: jest.fn()
+        },
+        sendMessage: jest.fn(),
+        getPlatformInfo: jest.fn(),
+        getBrowserInfo: jest.fn(),
+        openOptionsPage: jest.fn(),
+        reload: jest.fn()
+      },
+      notifications: {
+        create: jest.fn()
       }
+    };
+
+    mockChrome = {
+      scripting: {
+        executeScript: jest.fn()
+      }
+    };
+
+    // Initialize mock error handler
+    global.self = {
+      ErrorHandler: {
+        handleServiceWorkerError: jest.fn(),
+        handleDownloadError: jest.fn()
+      }
+    };
+  });
+
+  afterEach(() => {
+    // Restore originals
+    global.browser = originalBrowser;
+    global.chrome = originalChrome;
+    
+    // Clear all mocks
+    jest.clearAllMocks();
+    delete global.self;
+  });
+
+  describe('API Availability Detection Branches', () => {
+    test('should handle browser object undefined at initialization', async () => {
+      global.browser = undefined;
+      
+      // Import module when browser is undefined
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      
+      // Should not throw when browser is undefined
+      expect(() => {
+        require('../../../../src/background/api/browser-api.js');
+      }).not.toThrow();
+    });
+
+    test('should detect all API availability states', () => {
+      global.browser = mockBrowser;
+      
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      // Test all API availability branches
+      expect(BrowserAPI.isAvailable('downloads')).toBe(true);
+      expect(BrowserAPI.isAvailable('scripting')).toBe(true);
+      expect(BrowserAPI.isAvailable('tabs')).toBe(true);
+      expect(BrowserAPI.isAvailable('storage')).toBe(true);
+      expect(BrowserAPI.isAvailable('runtime')).toBe(true);
+      expect(BrowserAPI.isAvailable('nonexistent')).toBe(false);
+    });
+
+    test('should handle missing API branches', () => {
+      global.browser = {
+        // Only partial APIs available
+        downloads: mockBrowser.downloads,
+        // Missing scripting, tabs, storage, runtime
+      };
+      
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      expect(BrowserAPI.isAvailable('downloads')).toBe(true);
+      expect(BrowserAPI.isAvailable('scripting')).toBe(false);
+      expect(BrowserAPI.isAvailable('tabs')).toBe(false);
+      expect(BrowserAPI.isAvailable('storage')).toBe(false);
+      expect(BrowserAPI.isAvailable('runtime')).toBe(false);
+    });
+
+    test('should apply Chrome scripting polyfill branch', () => {
+      global.browser = {
+        // Browser object exists but no scripting
+      };
+      global.chrome = mockChrome;
+      
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      // Should apply polyfill and make scripting available
+      expect(BrowserAPI.isAvailable('scripting')).toBe(true);
     });
   });
 
-  describe('Storage API Integration and Error Handling', () => {
-    let factory;
-    let storageApi;
-
+  describe('Downloads API Branch Coverage', () => {
     beforeEach(() => {
-      if (!BrowserApiFactory) return;
-
-      // Reset browser mocks
-      global.browser = {
-        storage: {
-          sync: {
-            get: jest.fn(),
-            set: jest.fn(),
-            remove: jest.fn(),
-            clear: jest.fn()
-          },
-          local: {
-            get: jest.fn(),
-            set: jest.fn()
-          }
-        },
-        runtime: {
-          lastError: null
-        }
-      };
-
-      factory = BrowserApiFactory.getInstance();
-      storageApi = factory.getStorageApi();
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
     });
 
-    test('should handle successful storage operations', async () => {
-      if (!storageApi) return;
+    test('should cover downloadFile success path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      mockBrowser.downloads.download.mockResolvedValue('download-id-123');
 
-      const testData = { key1: 'value1', key2: 'value2' };
-      global.browser.storage.sync.get.mockResolvedValue(testData);
+      const result = await BrowserAPI.downloadFile({ 
+        url: 'https://test.com/file.pdf', 
+        filename: 'test.pdf' 
+      });
 
-      const result = await storageApi.get(['key1', 'key2']);
-      expect(result).toEqual(testData);
-      expect(global.browser.storage.sync.get).toHaveBeenCalledWith(['key1', 'key2']);
-    });
-
-    test('should handle storage quota exceeded errors', async () => {
-      if (!storageApi) return;
-
-      const quotaError = new Error('Quota exceeded');
-      quotaError.name = 'QuotaExceededError';
-      global.browser.storage.sync.set.mockRejectedValue(quotaError);
-
-      await expect(storageApi.set({ key: 'value' })).rejects.toThrow('Quota exceeded');
-    });
-
-    test('should handle storage access denied errors', async () => {
-      if (!storageApi) return;
-
-      const accessError = new Error('Storage access denied');
-      global.browser.storage.sync.get.mockRejectedValue(accessError);
-
-      await expect(storageApi.get(['key'])).rejects.toThrow('Storage access denied');
-    });
-
-    test('should handle chrome.runtime.lastError scenarios', async () => {
-      if (!storageApi) return;
-
-      global.chrome = {
-        runtime: {
-          lastError: { message: 'Chrome runtime error' }
-        },
-        storage: {
-          sync: {
-            get: jest.fn((keys, callback) => {
-              // Simulate Chrome callback with error
-              callback({});
-            })
-          }
-        }
-      };
-
-      // Should handle chrome.runtime.lastError appropriately
-      const result = await storageApi.get(['key']);
-      expect(result).toBeDefined();
-    });
-
-    test('should handle large data storage operations', async () => {
-      if (!storageApi) return;
-
-      // Create large data object
-      const largeData = {};
-      for (let i = 0; i < 1000; i++) {
-        largeData[`key${i}`] = 'x'.repeat(100);
-      }
-
-      global.browser.storage.sync.set.mockResolvedValue();
-
-      await expect(storageApi.set(largeData)).resolves.not.toThrow();
-      expect(global.browser.storage.sync.set).toHaveBeenCalledWith(largeData);
-    });
-
-    test('should handle concurrent storage operations', async () => {
-      if (!storageApi) return;
-
-      // Mock slow storage operations
-      global.browser.storage.sync.get.mockImplementation((keys) => 
-        new Promise(resolve => 
-          setTimeout(() => resolve({ [keys[0]]: `value-${keys[0]}` }), 10)
-        )
-      );
-
-      // Make concurrent requests
-      const promises = Array.from({ length: 10 }, (_, i) => 
-        storageApi.get([`key${i}`])
-      );
-
-      const results = await Promise.all(promises);
-      
-      expect(results).toHaveLength(10);
-      results.forEach((result, i) => {
-        expect(result).toEqual({ [`key${i}`]: `value-key${i}` });
+      expect(result).toBe('download-id-123');
+      expect(mockBrowser.downloads.download).toHaveBeenCalledWith({
+        url: 'https://test.com/file.pdf',
+        filename: 'test.pdf'
       });
     });
 
-    test('should handle storage API unavailable scenarios', async () => {
-      if (!BrowserApiFactory) return;
+    test('should cover downloadFile error path with ErrorHandler', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const downloadError = new Error('Download failed');
+      mockBrowser.downloads.download.mockRejectedValue(downloadError);
 
-      // Remove storage API
-      delete global.browser.storage;
+      await expect(BrowserAPI.downloadFile({ 
+        url: 'https://test.com/file.pdf', 
+        filename: 'test.pdf' 
+      })).rejects.toThrow('File download failed: Download failed');
 
-      const factoryWithoutStorage = BrowserApiFactory.getInstance();
-      const storageApiWithoutBrowser = factoryWithoutStorage.getStorageApi();
-
-      // Should provide fallback or handle gracefully
-      expect(storageApiWithoutBrowser).toBeDefined();
-    });
-  });
-
-  describe('Downloads API Integration and Fallback Logic', () => {
-    let factory;
-    let downloadsApi;
-
-    beforeEach(() => {
-      if (!BrowserApiFactory) return;
-
-      global.browser = {
-        downloads: {
-          download: jest.fn(),
-          search: jest.fn(),
-          cancel: jest.fn(),
-          erase: jest.fn()
-        },
-        runtime: {
-          lastError: null
-        }
-      };
-
-      factory = BrowserApiFactory.getInstance();
-      downloadsApi = factory.getDownloadsApi();
+      expect(global.self.ErrorHandler.handleDownloadError).toHaveBeenCalledWith(
+        downloadError, 
+        'test.pdf', 
+        'downloadFile'
+      );
     });
 
-    test('should handle successful download operations', async () => {
-      if (!downloadsApi) return;
-
-      const downloadOptions = {
-        url: 'data:text/plain;base64,VGVzdA==',
-        filename: 'test.txt',
-        saveAs: false
-      };
-
-      global.browser.downloads.download.mockResolvedValue(123);
-
-      const result = await downloadsApi.download(downloadOptions);
-      expect(result).toBe(123);
-      expect(global.browser.downloads.download).toHaveBeenCalledWith(downloadOptions);
-    });
-
-    test('should handle download permission errors', async () => {
-      if (!downloadsApi) return;
-
-      const permissionError = new Error('Downloads permission required');
-      global.browser.downloads.download.mockRejectedValue(permissionError);
-
-      const downloadOptions = { url: 'test.txt', filename: 'test.txt' };
-
-      await expect(downloadsApi.download(downloadOptions)).rejects.toThrow('Downloads permission required');
-    });
-
-    test('should handle downloads API unavailable', () => {
-      if (!BrowserApiFactory) return;
-
+    test('should cover downloadFile API unavailable branch', async () => {
+      // Remove downloads API
       delete global.browser.downloads;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
 
-      const factoryWithoutDownloads = BrowserApiFactory.getInstance();
-      const downloadsApiWithoutBrowser = factoryWithoutDownloads.getDownloadsApi();
+      await expect(BrowserAPI.downloadFile({ 
+        url: 'https://test.com/file.pdf' 
+      })).rejects.toThrow('Downloads API not available');
 
-      // Should return null or undefined when downloads API unavailable
-      expect(downloadsApiWithoutBrowser).toBeFalsy();
+      expect(global.self.ErrorHandler.handleServiceWorkerError).toHaveBeenCalled();
     });
 
-    test('should handle malformed download URLs', async () => {
-      if (!downloadsApi) return;
+    test('should cover searchDownloads success and error paths', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // Success path
+      mockBrowser.downloads.search.mockResolvedValue([{id: 1}, {id: 2}]);
+      const results = await BrowserAPI.searchDownloads({ state: 'complete' });
+      expect(results).toEqual([{id: 1}, {id: 2}]);
 
-      const badOptions = {
-        url: 'not-a-valid-url',
-        filename: 'test.txt'
-      };
-
-      const urlError = new Error('Invalid URL');
-      global.browser.downloads.download.mockRejectedValue(urlError);
-
-      await expect(downloadsApi.download(badOptions)).rejects.toThrow('Invalid URL');
+      // Error path
+      const searchError = new Error('Search failed');
+      mockBrowser.downloads.search.mockRejectedValue(searchError);
+      await expect(BrowserAPI.searchDownloads()).rejects.toThrow('Download search failed: Search failed');
     });
 
-    test('should handle download filename conflicts', async () => {
-      if (!downloadsApi) return;
+    test('should cover onDownloadChanged listener branches', () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const testListener = jest.fn();
 
-      const conflictOptions = {
-        url: 'data:text/plain;base64,VGVzdA==',
-        filename: 'existing-file.txt',
-        conflictAction: 'uniquify'
-      };
+      // Success path - add listener
+      const cleanup = BrowserAPI.onDownloadChanged(testListener);
+      expect(mockBrowser.downloads.onChanged.addListener).toHaveBeenCalledWith(testListener);
 
-      global.browser.downloads.download.mockResolvedValue(456);
+      // Success path - cleanup function
+      cleanup();
+      expect(mockBrowser.downloads.onChanged.removeListener).toHaveBeenCalledWith(testListener);
 
-      const result = await downloadsApi.download(conflictOptions);
-      expect(result).toBe(456);
-      expect(global.browser.downloads.download).toHaveBeenCalledWith(conflictOptions);
+      // Error path - cleanup function fails
+      mockBrowser.downloads.onChanged.removeListener.mockImplementation(() => {
+        throw new Error('Remove listener failed');
+      });
+      
+      // Should not throw error
+      const cleanup2 = BrowserAPI.onDownloadChanged(jest.fn());
+      expect(() => cleanup2()).not.toThrow();
     });
 
-    test('should handle very large file downloads', async () => {
-      if (!downloadsApi) return;
+    test('should cover onDownloadChanged API unavailable branch', () => {
+      delete global.browser.downloads;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
 
-      const largeFileData = 'x'.repeat(1000000); // 1MB
-      const largeBase64 = Buffer.from(largeFileData).toString('base64');
-
-      const largeDownloadOptions = {
-        url: `data:text/plain;base64,${largeBase64}`,
-        filename: 'large-file.txt'
-      };
-
-      global.browser.downloads.download.mockResolvedValue(789);
-
-      const result = await downloadsApi.download(largeDownloadOptions);
-      expect(result).toBe(789);
-    });
-  });
-
-  describe('Cross-Environment Compatibility', () => {
-    test('should detect Chrome environment correctly', () => {
-      if (!BrowserApiFactory) return;
-
-      global.chrome = {
-        runtime: { id: 'test' },
-        storage: { sync: { get: jest.fn() } }
-      };
-      delete global.browser;
-
-      const instance = BrowserApiFactory.getInstance();
-      expect(instance).toBeDefined();
-
-      // Should use Chrome APIs internally
-      const storageApi = instance.getStorageApi();
-      expect(storageApi).toBeDefined();
-    });
-
-    test('should detect Firefox environment correctly', () => {
-      if (!BrowserApiFactory) return;
-
-      delete global.chrome;
-      global.browser = {
-        runtime: { id: 'test' },
-        storage: { sync: { get: jest.fn() } }
-      };
-
-      const instance = BrowserApiFactory.getInstance();
-      expect(instance).toBeDefined();
-
-      const storageApi = instance.getStorageApi();
-      expect(storageApi).toBeDefined();
-    });
-
-    test('should handle Edge/Safari environments', () => {
-      if (!BrowserApiFactory) return;
-
-      // Edge uses chrome namespace but might have different behavior
-      global.chrome = {
-        runtime: { id: 'edge-extension' },
-        storage: { sync: { get: jest.fn() } },
-        // Edge might not have downloads API
-        downloads: undefined
-      };
-
-      const instance = BrowserApiFactory.getInstance();
-      expect(instance).toBeDefined();
-
-      const storageApi = instance.getStorageApi();
-      expect(storageApi).toBeDefined();
-
-      const downloadsApi = instance.getDownloadsApi();
-      // Should handle missing downloads API gracefully
-      expect(downloadsApi).toBeFalsy();
-    });
-
-    test('should handle unknown browser environments', () => {
-      if (!BrowserApiFactory) return;
-
-      delete global.chrome;
-      delete global.browser;
-
-      // Should create instance with minimal functionality
-      const instance = BrowserApiFactory.getInstance();
-      expect(instance).toBeDefined();
-
-      // Should provide APIs even if browser APIs are missing
-      const storageApi = instance.getStorageApi();
-      const downloadsApi = instance.getDownloadsApi();
-
-      expect(storageApi || downloadsApi).toBeTruthy(); // At least one should exist
+      const cleanup = BrowserAPI.onDownloadChanged(jest.fn());
+      // Should return no-op cleanup function
+      expect(() => cleanup()).not.toThrow();
     });
   });
 
-  describe('Error Recovery and Resilience', () => {
-    test('should recover from temporary API failures', async () => {
-      if (!BrowserApiFactory) return;
+  describe('Scripting API Branch Coverage', () => {
+    beforeEach(() => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+    });
 
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
+    test('should cover executeScriptInTab success path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      mockBrowser.scripting.executeScript.mockResolvedValue([{ result: 'success' }]);
 
-      let callCount = 0;
-      global.browser.storage.sync.get = jest.fn().mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.reject(new Error('Temporary failure'));
-        }
-        return Promise.resolve({ key: 'value' });
+      const result = await BrowserAPI.executeScriptInTab(123, {
+        func: () => 'test'
       });
 
-      // First call fails
-      await expect(storageApi.get(['key'])).rejects.toThrow('Temporary failure');
-
-      // Second call succeeds
-      const result = await storageApi.get(['key']);
-      expect(result).toEqual({ key: 'value' });
+      expect(result).toEqual([{ result: 'success' }]);
+      expect(mockBrowser.scripting.executeScript).toHaveBeenCalledWith({
+        target: { tabId: 123 },
+        func: expect.any(Function)
+      });
     });
 
-    test('should handle API method removal at runtime', async () => {
-      if (!BrowserApiFactory) return;
+    test('should cover executeScriptInTab error path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const scriptError = new Error('Script execution failed');
+      mockBrowser.scripting.executeScript.mockRejectedValue(scriptError);
 
-      const factory = BrowserApiFactory.getInstance();
-      const downloadsApi = factory.getDownloadsApi();
+      await expect(BrowserAPI.executeScriptInTab(123, { func: () => 'test' }))
+        .rejects.toThrow('Script execution failed: Script execution failed');
 
-      // Remove download method at runtime (simulating browser update/change)
-      delete global.browser.downloads.download;
-
-      // Should handle gracefully
-      if (downloadsApi && downloadsApi.download) {
-        await expect(downloadsApi.download({})).rejects.toBeDefined();
-      }
+      expect(global.self.ErrorHandler.handleServiceWorkerError).toHaveBeenCalledWith(
+        scriptError,
+        'executeScriptInTab'
+      );
     });
 
-    test('should handle corrupted API responses', async () => {
-      if (!BrowserApiFactory) return;
+    test('should cover executeScriptInTab API unavailable branch', async () => {
+      delete global.browser.scripting;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
 
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
+      await expect(BrowserAPI.executeScriptInTab(123, { func: () => 'test' }))
+        .rejects.toThrow('Scripting API not available');
+    });
+  });
 
-      // Mock corrupted response
-      global.browser.storage.sync.get.mockResolvedValue(null);
+  describe('Tabs API Branch Coverage', () => {
+    beforeEach(() => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+    });
 
-      const result = await storageApi.get(['key']);
+    test('should cover getActiveTab success path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      mockBrowser.tabs.query.mockResolvedValue([{ id: 123, url: 'https://test.com' }]);
+
+      const tab = await BrowserAPI.getActiveTab();
+      
+      expect(tab).toEqual({ id: 123, url: 'https://test.com' });
+      expect(mockBrowser.tabs.query).toHaveBeenCalledWith({ 
+        active: true, 
+        currentWindow: true 
+      });
+    });
+
+    test('should cover getActiveTab error path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const tabError = new Error('Tab query failed');
+      mockBrowser.tabs.query.mockRejectedValue(tabError);
+
+      await expect(BrowserAPI.getActiveTab()).rejects.toThrow('Get active tab failed: Tab query failed');
+    });
+
+    test('should cover getTab success and error paths', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // Success path
+      mockBrowser.tabs.get.mockResolvedValue({ id: 456, title: 'Test Tab' });
+      const tab = await BrowserAPI.getTab(456);
+      expect(tab).toEqual({ id: 456, title: 'Test Tab' });
+
+      // Error path
+      const getError = new Error('Tab not found');
+      mockBrowser.tabs.get.mockRejectedValue(getError);
+      await expect(BrowserAPI.getTab(999)).rejects.toThrow('Get tab failed: Tab not found');
+    });
+
+    test('should cover sendMessageToTab success and error paths', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // Success path
+      mockBrowser.tabs.sendMessage.mockResolvedValue({ success: true });
+      const response = await BrowserAPI.sendMessageToTab(123, { action: 'test' });
+      expect(response).toEqual({ success: true });
+
+      // Error path
+      const messageError = new Error('Message send failed');
+      mockBrowser.tabs.sendMessage.mockRejectedValue(messageError);
+      await expect(BrowserAPI.sendMessageToTab(123, { action: 'test' }))
+        .rejects.toThrow('Send message to tab failed: Message send failed');
+    });
+
+    test('should cover tabs API unavailable branches', async () => {
+      delete global.browser.tabs;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      await expect(BrowserAPI.getActiveTab()).rejects.toThrow('Tabs API not available');
+      await expect(BrowserAPI.getTab(123)).rejects.toThrow('Tabs API not available');
+      await expect(BrowserAPI.sendMessageToTab(123, {})).rejects.toThrow('Tabs API not available');
+    });
+  });
+
+  describe('Storage API Branch Coverage', () => {
+    beforeEach(() => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+    });
+
+    test('should cover getOptions success path with stored data', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const storedOptions = { downloadImages: false, saveAs: true };
+      mockBrowser.storage.sync.get.mockResolvedValue(storedOptions);
+
+      const options = await BrowserAPI.getOptions();
+      
+      // Should merge with defaults
+      expect(options).toMatchObject(storedOptions);
+      expect(options.downloadMode).toBe('downloadsApi'); // Default value
+    });
+
+    test('should cover getOptions error path - fallback to defaults', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      mockBrowser.storage.sync.get.mockRejectedValue(new Error('Storage access failed'));
+
+      const options = await BrowserAPI.getOptions();
+      
+      // Should return default options
+      expect(options.downloadMode).toBe('downloadsApi');
+      expect(options.downloadImages).toBe(true);
+    });
+
+    test('should cover getOptions API unavailable branch', async () => {
+      delete global.browser.storage;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      const options = await BrowserAPI.getOptions();
+      
+      // Should return default options
+      expect(options.downloadMode).toBe('downloadsApi');
+    });
+
+    test('should cover saveOptions success path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      mockBrowser.storage.sync.set.mockResolvedValue();
+
+      const result = await BrowserAPI.saveOptions({ downloadImages: false });
+      
+      expect(result).toBe(true);
+      expect(mockBrowser.storage.sync.set).toHaveBeenCalledWith({ downloadImages: false });
+    });
+
+    test('should cover saveOptions error path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const saveError = new Error('Storage save failed');
+      mockBrowser.storage.sync.set.mockRejectedValue(saveError);
+
+      await expect(BrowserAPI.saveOptions({ test: 'value' }))
+        .rejects.toThrow('Save options failed: Storage save failed');
+    });
+
+    test('should cover saveOptions API unavailable branch', async () => {
+      delete global.browser.storage;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      const result = await BrowserAPI.saveOptions({ test: 'value' });
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('Runtime API Branch Coverage', () => {
+    beforeEach(() => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+    });
+
+    test('should cover onMessage success path with cleanup', () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const testListener = jest.fn();
+
+      const cleanup = BrowserAPI.onMessage(testListener);
+      
+      expect(mockBrowser.runtime.onMessage.addListener).toHaveBeenCalledWith(testListener);
+      expect(typeof cleanup).toBe('function');
+
+      cleanup();
+      expect(mockBrowser.runtime.onMessage.removeListener).toHaveBeenCalledWith(testListener);
+    });
+
+    test('should cover onMessage API unavailable branch', () => {
+      delete global.browser.runtime;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      const cleanup = BrowserAPI.onMessage(jest.fn());
+      expect(cleanup).toBeUndefined();
+    });
+
+    test('should cover sendRuntimeMessage success and error paths', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // Success path
+      mockBrowser.runtime.sendMessage.mockResolvedValue({ success: true });
+      const response = await BrowserAPI.sendRuntimeMessage({ action: 'test' });
+      expect(response).toEqual({ success: true });
+
+      // Error path
+      const messageError = new Error('Runtime message failed');
+      mockBrowser.runtime.sendMessage.mockRejectedValue(messageError);
+      await expect(BrowserAPI.sendRuntimeMessage({ action: 'test' }))
+        .rejects.toThrow('Send runtime message failed: Runtime message failed');
+    });
+
+    test('should cover sendRuntimeMessage API unavailable branch', async () => {
+      delete global.browser.runtime;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      await expect(BrowserAPI.sendRuntimeMessage({ action: 'test' }))
+        .rejects.toThrow('Runtime API not available');
+    });
+
+    test('should cover getPlatformInfo success, error, and unavailable paths', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // Success path
+      mockBrowser.runtime.getPlatformInfo.mockResolvedValue({ os: 'mac', arch: 'x86-64' });
+      let info = await BrowserAPI.getPlatformInfo();
+      expect(info).toEqual({ os: 'mac', arch: 'x86-64' });
+
+      // Error path
+      mockBrowser.runtime.getPlatformInfo.mockRejectedValue(new Error('Platform info failed'));
+      info = await BrowserAPI.getPlatformInfo();
+      expect(info).toEqual({ os: 'unknown', arch: 'unknown' });
+
+      // API unavailable path
+      delete global.browser.runtime;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI2 = global.self.BrowserAPI;
+      
+      info = await BrowserAPI2.getPlatformInfo();
+      expect(info).toEqual({ os: 'unknown', arch: 'unknown' });
+    });
+
+    test('should cover getBrowserInfo branches', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // Success path
+      mockBrowser.runtime.getBrowserInfo = jest.fn().mockResolvedValue({
+        name: 'Firefox',
+        version: '100.0'
+      });
+      let info = await BrowserAPI.getBrowserInfo();
+      expect(info).toEqual({ name: 'Firefox', version: '100.0' });
+
+      // Error path
+      mockBrowser.runtime.getBrowserInfo.mockRejectedValue(new Error('Browser info failed'));
+      info = await BrowserAPI.getBrowserInfo();
+      expect(info).toBe('Browser info not available');
+
+      // API unavailable path
+      delete mockBrowser.runtime.getBrowserInfo;
+      info = await BrowserAPI.getBrowserInfo();
+      expect(info).toBe('Browser info not available');
+    });
+
+    test('should cover management API branches', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      
+      // openOptionsPage success
+      mockBrowser.runtime.openOptionsPage.mockResolvedValue();
+      let result = await BrowserAPI.openOptionsPage();
+      expect(result).toBe(true);
+
+      // openOptionsPage error
+      mockBrowser.runtime.openOptionsPage.mockRejectedValue(new Error('Options page failed'));
+      await expect(BrowserAPI.openOptionsPage()).rejects.toThrow('Open options page failed: Options page failed');
+
+      // reloadExtension success
+      mockBrowser.runtime.reload.mockReturnValue();
+      result = await BrowserAPI.reloadExtension();
+      expect(result).toBe(true);
+
+      // reloadExtension error
+      mockBrowser.runtime.reload.mockImplementation(() => {
+        throw new Error('Reload failed');
+      });
+      await expect(BrowserAPI.reloadExtension()).rejects.toThrow('Reload extension failed: Reload failed');
+    });
+  });
+
+  describe('Notifications API Branch Coverage', () => {
+    beforeEach(() => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+    });
+
+    test('should cover createNotification success path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      mockBrowser.notifications.create.mockResolvedValue('notification-id-123');
+
+      const result = await BrowserAPI.createNotification({
+        type: 'basic',
+        iconUrl: 'icon.png',
+        title: 'Test',
+        message: 'Test message'
+      });
+
+      expect(result).toBe('notification-id-123');
+    });
+
+    test('should cover createNotification error path', async () => {
+      const BrowserAPI = global.self.BrowserAPI;
+      const notificationError = new Error('Notification creation failed');
+      mockBrowser.notifications.create.mockRejectedValue(notificationError);
+
+      await expect(BrowserAPI.createNotification({ title: 'Test' }))
+        .rejects.toThrow('Create notification failed: Notification creation failed');
+    });
+
+    test('should cover createNotification API unavailable branches', async () => {
+      // Runtime available but notifications not available
+      delete mockBrowser.notifications;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      const result = await BrowserAPI.createNotification({ title: 'Test' });
       expect(result).toBeNull();
-    });
 
-    test('should handle API timeout scenarios', async () => {
-      if (!BrowserApiFactory) return;
+      // Runtime not available
+      delete global.browser.runtime;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI2 = global.self.BrowserAPI;
 
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
-
-      // Mock timeout
-      global.browser.storage.sync.get.mockImplementation(() => 
-        new Promise(() => {}) // Never resolves
-      );
-
-      // Use Promise.race to test timeout handling
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 100)
-      );
-
-      await expect(
-        Promise.race([storageApi.get(['key']), timeoutPromise])
-      ).rejects.toThrow('Timeout');
+      const result2 = await BrowserAPI2.createNotification({ title: 'Test' });
+      expect(result2).toBeNull();
     });
   });
 
-  describe('Configuration Management Integration', () => {
-    test('should integrate with default-options configuration', async () => {
-      if (!BrowserApiFactory) return;
-
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
-
-      // Mock stored configuration
-      const storedConfig = {
-        headingStyle: 'setext',
-        turndownEscape: false,
-        customProperty: 'custom value'
-      };
-
-      global.browser.storage.sync.get.mockResolvedValue(storedConfig);
-
-      const result = await storageApi.get(Object.keys(storedConfig));
-      expect(result).toEqual(storedConfig);
-    });
-
-    test('should handle configuration validation through storage', async () => {
-      if (!BrowserApiFactory) return;
-
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
-
-      // Mock invalid configuration
-      const invalidConfig = {
-        title: null,
-        disallowedChars: 123,
-        validProperty: 'valid value'
-      };
-
-      global.browser.storage.sync.get.mockResolvedValue(invalidConfig);
-      global.browser.storage.sync.set.mockResolvedValue();
-
-      const result = await storageApi.get(Object.keys(invalidConfig));
-      expect(result).toEqual(invalidConfig);
-
-      // Configuration validation should happen at the options level
-      // Storage API should pass through data as-is
-    });
-
-    test('should support configuration migration scenarios', async () => {
-      if (!BrowserApiFactory) return;
-
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
-
-      // Mock old configuration format
-      const oldConfig = {
-        oldProperty: 'old value',
-        deprecatedSetting: true
-      };
-
-      // Mock new configuration format
-      const newConfig = {
-        newProperty: 'new value',
-        modernSetting: true
-      };
-
-      global.browser.storage.sync.get.mockResolvedValueOnce(oldConfig);
-      global.browser.storage.sync.set.mockResolvedValue();
-      global.browser.storage.sync.remove.mockResolvedValue();
-
-      // Get old config
-      const oldResult = await storageApi.get(Object.keys(oldConfig));
-      expect(oldResult).toEqual(oldConfig);
-
-      // Set new config
-      await storageApi.set(newConfig);
-      expect(global.browser.storage.sync.set).toHaveBeenCalledWith(newConfig);
-
-      // Remove old config
-      await storageApi.remove(Object.keys(oldConfig));
-      expect(global.browser.storage.sync.remove).toHaveBeenCalledWith(Object.keys(oldConfig));
-    });
-  });
-
-  describe('Performance and Memory Management', () => {
-    test('should handle high-frequency API calls efficiently', async () => {
-      if (!BrowserApiFactory) return;
-
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
-
-      global.browser.storage.sync.get.mockImplementation((keys) => 
-        Promise.resolve({ [keys[0]]: `value-${Date.now()}` })
-      );
-
-      const startTime = performance.now();
-
-      // Make many rapid calls
-      const promises = Array.from({ length: 100 }, (_, i) => 
-        storageApi.get([`key${i}`])
-      );
-
-      const results = await Promise.all(promises);
-      const endTime = performance.now();
-
-      expect(endTime - startTime).toBeLessThan(1000);
-      expect(results).toHaveLength(100);
-    });
-
-    test('should not leak memory with repeated instantiation', () => {
-      if (!BrowserApiFactory) return;
-
-      const instances = [];
+  describe('Error Handler Integration Branches', () => {
+    test('should handle missing ErrorHandler gracefully', async () => {
+      global.browser = mockBrowser;
+      delete global.self.ErrorHandler; // Remove error handler
       
-      // Create many instances (should all be the same singleton)
-      for (let i = 0; i < 1000; i++) {
-        instances.push(BrowserApiFactory.getInstance());
-      }
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
 
-      // All should be the same instance
-      const firstInstance = instances[0];
-      instances.forEach(instance => {
-        expect(instance).toBe(firstInstance);
+      mockBrowser.downloads.download.mockRejectedValue(new Error('Download failed'));
+
+      // Should not throw even without ErrorHandler
+      await expect(BrowserAPI.downloadFile({ url: 'test.com' }))
+        .rejects.toThrow('File download failed: Download failed');
+    });
+  });
+
+  describe('Initialization Delay Branches', () => {
+    test('should handle delayed browser initialization', (done) => {
+      global.browser = undefined;
+      
+      // Load module without browser
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+
+      // Set browser after delay
+      setTimeout(() => {
+        global.browser = mockBrowser;
+        
+        // Check that APIs become available
+        setTimeout(() => {
+          try {
+            const BrowserAPI = global.self.BrowserAPI;
+            expect(BrowserAPI.isAvailable('downloads')).toBe(true);
+            done();
+          } catch (error) {
+            done(error);
+          }
+        }, 150); // After initialization delay
+      }, 50);
+    });
+
+    test('should handle permanent browser unavailability', (done) => {
+      global.browser = undefined;
+      
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+
+      // Keep browser undefined
+      setTimeout(() => {
+        try {
+          const BrowserAPI = global.self.BrowserAPI;
+          expect(BrowserAPI.isAvailable('downloads')).toBe(false);
+          done();
+        } catch (error) {
+          done(error);
+        }
+      }, 250); // After both initialization attempts
+    });
+  });
+
+  describe('Message Listener Management', () => {
+    test('should track message listener count', () => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      expect(BrowserAPI.getMessageListenerCount()).toBe(0);
+
+      const cleanup1 = BrowserAPI.onMessage(jest.fn());
+      expect(BrowserAPI.getMessageListenerCount()).toBe(1);
+
+      const cleanup2 = BrowserAPI.onMessage(jest.fn());
+      expect(BrowserAPI.getMessageListenerCount()).toBe(2);
+
+      cleanup1();
+      expect(BrowserAPI.getMessageListenerCount()).toBe(1);
+
+      cleanup2();
+      expect(BrowserAPI.getMessageListenerCount()).toBe(0);
+    });
+  });
+
+  describe('Default Options Coverage', () => {
+    test('should return complete default options object', () => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
+
+      const defaults = BrowserAPI.getDefaultOptions();
+      
+      expect(defaults).toMatchObject({
+        downloadMode: 'downloadsApi',
+        saveAs: false,
+        downloadImages: true,
+        imageStyle: 'markdown',
+        imageRefStyle: 'inline',
+        imagePrefix: '',
+        frontmatter: '',
+        backmatter: '',
+        turndownEscape: true,
+        linkStyle: 'keep',
+        codeBlockStyle: 'fenced',
+        fence: '```',
+        disallowedChars: [],
+        mdClipsFolder: '',
+        includeTemplate: false,
+        template: ''
       });
-
-      // Clear references
-      instances.length = 0;
     });
+  });
 
-    test('should handle large data operations without memory issues', async () => {
-      if (!BrowserApiFactory) return;
+  describe('Module Export Coverage', () => {
+    test('should expose all expected API methods', () => {
+      global.browser = mockBrowser;
+      delete require.cache[require.resolve('../../../../src/background/api/browser-api.js')];
+      require('../../../../src/background/api/browser-api.js');
+      const BrowserAPI = global.self.BrowserAPI;
 
-      const factory = BrowserApiFactory.getInstance();
-      const storageApi = factory.getStorageApi();
+      // API availability methods
+      expect(typeof BrowserAPI.isAvailable).toBe('function');
+      expect(typeof BrowserAPI.getStatus).toBe('function');
 
-      // Create large data set
-      const largeData = {};
-      for (let i = 0; i < 10000; i++) {
-        largeData[`key${i}`] = `value${i}`.repeat(100);
-      }
+      // Downloads API methods
+      expect(typeof BrowserAPI.downloadFile).toBe('function');
+      expect(typeof BrowserAPI.searchDownloads).toBe('function');
+      expect(typeof BrowserAPI.onDownloadChanged).toBe('function');
 
-      global.browser.storage.sync.get.mockResolvedValue(largeData);
+      // Tabs API methods
+      expect(typeof BrowserAPI.getActiveTab).toBe('function');
+      expect(typeof BrowserAPI.getTab).toBe('function');
+      expect(typeof BrowserAPI.sendMessageToTab).toBe('function');
 
-      const startMemory = process.memoryUsage?.().heapUsed || 0;
-      
-      const result = await storageApi.get(Object.keys(largeData));
-      
-      const endMemory = process.memoryUsage?.().heapUsed || 0;
-      const memoryIncrease = endMemory - startMemory;
+      // Scripting API methods
+      expect(typeof BrowserAPI.executeScriptInTab).toBe('function');
 
-      expect(result).toEqual(largeData);
-      // Memory increase should be reasonable (less than 100MB for test data)
-      expect(memoryIncrease).toBeLessThan(100 * 1024 * 1024);
+      // Storage API methods
+      expect(typeof BrowserAPI.getOptions).toBe('function');
+      expect(typeof BrowserAPI.saveOptions).toBe('function');
+      expect(typeof BrowserAPI.getDefaultOptions).toBe('function');
+
+      // Runtime API methods
+      expect(typeof BrowserAPI.onMessage).toBe('function');
+      expect(typeof BrowserAPI.sendRuntimeMessage).toBe('function');
+
+      // Notifications API methods
+      expect(typeof BrowserAPI.createNotification).toBe('function');
+
+      // Platform/Browser info methods
+      expect(typeof BrowserAPI.getPlatformInfo).toBe('function');
+      expect(typeof BrowserAPI.getBrowserInfo).toBe('function');
+
+      // Management methods
+      expect(typeof BrowserAPI.openOptionsPage).toBe('function');
+      expect(typeof BrowserAPI.reloadExtension).toBe('function');
+
+      // Utility methods
+      expect(typeof BrowserAPI.getMessageListenerCount).toBe('function');
     });
   });
 });

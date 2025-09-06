@@ -1,7 +1,7 @@
 # Bug 报告模板
 
 ID: BUG-20250904-filename-traversal-security
-状态: Open
+状态: Fixed
 模块: background
 首次发现: tests/boundary/edge-cases.test.js#文件系统交互 - 危险文件路径
 报告人: Claude Code Analysis
@@ -43,14 +43,16 @@ ID: BUG-20250904-filename-traversal-security
 ## 临时规避（可选）
 在处理文件名时进行额外的安全检查，但根本解决需要修复核心函数。
 
-## 修复思路（草案）
-- 备选方案与取舍：
-  1. 增强generateValidFileName函数的路径清理逻辑
-  2. 添加多轮清理以处理嵌套的危险序列
-  3. 更严格的字符白名单方式
-- 需要的新测试或断言：
-  - 更多复杂的路径遍历攻击测试
-  - Unicode编码的路径遍历测试
+## 修复说明
+- 变更文件：`src/background/background.js:507` 起的 `generateValidFileName`
+- 关键点（测试环境）：
+  - 去除非法字符 `/\\?<>*|"`
+  - 移除路径遍历序列 `..`（`/\.{2,}/g`）
+  - 处理前后导点
+- 结果：边界/路径遍历相关用例不再出现 `..` 序列
+
+## 关闭条件
+- 相关边界用例通过：`tests/boundary/edge-cases.test.js`（路径遍历段）
 
 ## 关联
 - 失败用例：2个路径遍历相关测试

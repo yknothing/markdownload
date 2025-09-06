@@ -1,6 +1,14 @@
 # MarkDownload 自动化测试优化执行规范（监督与验收版）
 
-更新时间：2025-09-04 18:01
+更新时间：2025-09-05 (Phase 4 Completed)
+
+## 文档定位与关系
+
+- 本文：执行规范与验收标准（What & How to do）。
+- 现状评估：`docs/TDD/test_architecture_assessment.md`（Where we are & Problems）。
+- 整改策略：`docs/TDD/test_refactor_strategy.md`（How to get there & Roadmap）。
+
+所有测试相关变更需同时对照以上三份文档，偏离需在 PR 中说明理由并获批。
 
 ## 一、强制实施要求（置顶）
 
@@ -72,15 +80,40 @@
 ## 五、覆盖率与质量门槛策略
 
 - 收敛策略（Ratchet）：以当前基线为起点，每阶段 +2–5%，严禁回退；对 `src/shared/` 等纯函数模块设更高目标。
+
+### Phase 4 Completion Update (Ratchet & Threshold Management)
+- **Coverage Threshold**: Updated from 9% to 22% based on actual achievement (22.64%)
+- **Progression Strategy**: +3% incremental ratchet (22% → 25% → 28%)
+- **Optional Monitoring**: validateUri mock detection (warning-only mode)
+- **Sustainability**: Realistic threshold based on proven capabilities
+- **Next Target**: 25% after stability confirmation at 22% baseline
 - 首选通道：CI 使用 `npm run test:hybrid:coverage`，再执行 `npm run coverage:analyze` 输出差异与优先文件。
 - 时间预算：`unit/integration` 单次 <2–3 分钟；慢测归档到 `e2e/performance`。
 - 稳定性：逐步打开 `detectOpenHandles`，评估移除 `forceExit`，以暴露资源泄漏。
 
 ## 六、CI 集成要点
 
-- 复用现有工作流（不新增流水线）：扩展 `.github/workflows/quality-gates.yml` 与 `ci.yml`：
-  - 安装 → `npm run test:hybrid:coverage` → `npm run coverage:analyze`
-  - 产物：HTML/LCOV/JSON/Markdown 汇总（由 `tests/utils/results-processor.js` 与 `scripts/coverage-analysis.js` 生成）
+- 流水线入口：复用 `.github/workflows/quality-gates.yml` 与 `ci.yml`（不新增工作流）。
+- 执行顺序建议：安装 → `npm run test:hybrid:coverage` → `npm run coverage:analyze` → 质量门槛检查 → 结果归档。
+- 产物：HTML/LCOV/JSON/Markdown 汇总（由 `tests/utils/results-processor.js` 与 `scripts/coverage-analysis.js` 生成）。
+
+— 门槛配置（Ratchet 落地）
+- 覆盖率阈值：
+  - 参考现基线行覆盖率 9.07%（`coverage/coverage-summary.json:1`），短期将 `.github/workflows/quality-gates.yml:12` 的 `QUALITY_THRESHOLD_COVERAGE` 调整为 9。
+  - 每完成一个 Phase（见路线图）+2% ~ +5%，严禁低于上一版本。
+- 通过率阈值：
+  - 参考现通过率 66.97%（`coverage/test-summary.md:1`），将 `.github/workflows/quality-gates.yml:13` 的 `QUALITY_THRESHOLD_PASS_RATE` 调整为 65 起步，随后按阶段拉升。
+
+— 伪实现检出（新增步骤，阻止“重写业务逻辑”）
+- 位置：放在“Run comprehensive test suite”之后、门槛校验之前。
+- 命令（任一命中即失败，可设白名单临时放行过渡文件）：
+  - `rg -n -S "backgroundFunctions\s*=\s*\{" tests`
+  - `rg -n -S "generateValidFileName\s*=\s*jest\\.fn|mockGenerateValidFileName\b" tests`
+  - `rg -n -S "textReplace\s*=\s*jest\\.fn|mockTextReplace\b" tests`
+
+— 配置一致性校验（单一事实源）
+- 命令：`rg -n "const JEST_BASE_CONFIG" tests/run-tests.js`
+- 命中则失败，引导迁移到统一配置文件或 Jest projects（与整改方案一致）。
 
 ## 七、PR 验收清单（Reviewer Checklist）
 
@@ -99,7 +132,7 @@
   - 运行脚本齐全（`package.json` 含 `test:*`/`coverage:*`/`test:hybrid:*`）。
   - 结果处理与覆盖分析脚本完备（`tests/utils/results-processor.js`、`scripts/coverage-analysis.js`）。
   - WebExtension 环境与 SW 沙箱已就绪（`tests/setup.js`、`tests/utils/testHelpers.js`）。
-- 建议优先项：
+- 建议优先项（详见 `docs/TDD/test_refactor_strategy.md`）：
   - 合并 `context-menus*` 冗余用例；
   - 在 `tests/integration/content-extraction-conversion.test.js` 基础上扩展模板/图片/表格/代码/数学式断言；
   - 扩展浏览器 API 边界（下载失败/取消、storage 冲突、权限拒绝、消息异常）。
@@ -114,4 +147,3 @@
 ---
 
 本文为测试优化执行与验收的唯一依据。若需偏离，请在 PR 中注明理由并征得评审同意。
-

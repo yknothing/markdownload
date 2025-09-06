@@ -31,21 +31,8 @@ const TEST_CONFIGS = {
   }
 };
 
-const JEST_BASE_CONFIG = {
-  testEnvironment: 'jsdom',
-  setupFilesAfterEnv: ['<rootDir>/tests/setup.js'],
-  moduleNameMapping: {
-    '^@/(.*)$': '<rootDir>/src/$1'
-  },
-  collectCoverageFrom: [
-    'src/**/*.js',
-    '!src/**/*.min.js',
-    '!src/web-ext-artifacts/**',
-    '!src/node_modules/**'
-  ],
-  testTimeout: 10000,
-  verbose: true
-};
+// Base configuration is now loaded from jest.base.config.js (Single Source of Truth)
+// This eliminates configuration duplication and ensures consistency
 
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
@@ -207,9 +194,10 @@ ${BOLD}Environment Variables:${RESET}
 
   generateJestConfig() {
     const testConfig = TEST_CONFIGS[this.options.mode];
+    const baseConfig = require(path.join(process.cwd(), 'jest.base.config.js'));
     
     const config = {
-      ...JEST_BASE_CONFIG,
+      ...baseConfig,
       testMatch: testConfig.testMatch,
       displayName: testConfig.displayName
     };
@@ -218,23 +206,22 @@ ${BOLD}Environment Variables:${RESET}
     if (this.options.coverage) {
       config.collectCoverage = true;
       config.coverageDirectory = 'coverage';
-      config.coverageReporters = ['text', 'lcov', 'html'];
-      config.coverageThreshold = {
-        global: {
-          branches: 70,
-          functions: 70,
-          lines: 70,
-          statements: 70
-        }
-      };
+      config.coverageReporters = ['text', 'text-summary', 'lcov', 'html', 'json', 'json-summary'];
+      // Coverage thresholds are maintained in base config
     }
 
-    // Debug configuration
+    // Debug configuration - override base config exit strategy
     if (this.options.debug) {
       config.verbose = true;
       config.detectOpenHandles = true;
       config.forceExit = false;
     }
+
+    // Use custom reporter instead of deprecated testResultsProcessor
+    config.reporters = [
+      'default',
+      ['<rootDir>/tests/utils/custom-reporter.js', {}]
+    ];
 
     return config;
   }

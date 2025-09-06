@@ -9,7 +9,7 @@
 const path = require('path');
 
 // Mock only browser APIs, not business logic
-require('../mocks/browserMocks.js');
+require('../../mocks/browserMocks.js');
 
 describe('Shared Module Real Logic Tests', () => {
   let BrowserApiFactory;

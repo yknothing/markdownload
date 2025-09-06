@@ -10,11 +10,10 @@ module.exports = {
     '<rootDir>/tests/mocks/hybridMocks.js' // Use hybrid mocks instead of full mocks
   ],
 
-  // Test file patterns - include hybrid tests
+  // Test file patterns - include all tests for hybrid execution
   testMatch: [
-    '<rootDir>/tests/unit/hybrid-*.test.js',
-    '<rootDir>/tests/unit/shared-real-logic.test.js',
-    '<rootDir>/tests/unit/*-real-logic.test.js'
+    '<rootDir>/tests/**/*.test.js',
+    '<rootDir>/tests/**/*.spec.js'
   ],
 
   // Enhanced coverage settings for real code execution
@@ -68,9 +67,14 @@ module.exports = {
     '^.+\\.js$': 'babel-jest'
   },
 
-  // Enable additional debugging
-  globals: {
-    'process.env.NODE_ENV': 'test',
-    'process.env.HYBRID_TEST': 'true'
+  // Note: Environment variables are now injected via process.env
+  // HYBRID_TEST environment variable should be set by npm script
+
+  // Fix jsdom configuration for compatibility
+  testEnvironmentOptions: {
+    ...baseConfig.testEnvironmentOptions,
+    // Remove incompatible resources setting that causes ResourceLoader errors
+    resources: undefined,
+    runScripts: undefined
   }
 };

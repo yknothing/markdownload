@@ -1,64 +1,22 @@
 /**
  * Critical Functionality Tests for MarkDownload
+ * REFACTORED: Using real business logic functions from background.js
  * These tests cover the most important functionality that could cause data loss or corruption
  */
 
-// Mock imports (in a real setup, these would be proper imports)
-const mockTurndown = (content, options, article) => {
-  // Simplified mock implementation for demonstration
-  let markdown = content
-    .replace(/<h1[^>]*>/g, '# ')
-    .replace(/<\/h1>/g, '')
-    .replace(/<h2[^>]*>/g, '## ')
-    .replace(/<\/h2>/g, '')
-    .replace(/<p[^>]*>/g, '')
-    .replace(/<\/p>/g, '\n\n')
-    .replace(/<strong[^>]*>/g, '**')
-    .replace(/<\/strong>/g, '**')
-    .replace(/<em[^>]*>/g, '_')
-    .replace(/<\/em>/g, '_');
-  
-  return { markdown: options.frontmatter + markdown + options.backmatter, imageList: {} };
-};
+// Import real business logic functions from background.js
+const {
+  turndown,
+  textReplace,
+  generateValidFileName,
+  convertArticleToMarkdown
+} = require('../../src/background/background.js');
 
-const mockTextReplace = (template, article, disallowedChars = null) => {
-  let result = template;
-  
-  // Replace basic variables
-  for (const key in article) {
-    if (article.hasOwnProperty(key)) {
-      const value = article[key] || '';
-      result = result.replace(new RegExp(`{${key}}`, 'g'), value);
-      result = result.replace(new RegExp(`{${key}:lower}`, 'g'), value.toLowerCase());
-      result = result.replace(new RegExp(`{${key}:upper}`, 'g'), value.toUpperCase());
-      result = result.replace(new RegExp(`{${key}:kebab}`, 'g'), value.replace(/ /g, '-').toLowerCase());
-    }
-  }
-  
-  // Replace date
-  result = result.replace(/{date:YYYY-MM-DD}/g, '2024-01-01');
-  result = result.replace(/{date:YYYY-MM-DDTHH:mm:ss}/g, '2024-01-01T12:00:00');
-  
-  // Replace keywords
-  if (article.keywords) {
-    result = result.replace(/{keywords}/g, article.keywords.join(', '));
-  }
-  
-  // Remove any remaining curly braces
-  result = result.replace(/{[^}]*}/g, '');
-  
-  return result;
-};
+// Set up test environment
+require('../mocks/browserMocks.js');
 
-const mockGenerateValidFileName = (title, disallowedChars = null) => {
-  if (!title) return title;
-  
-  // Remove illegal characters
-  let name = title.replace(/[\/\?<>\\:\*\|":]/g, '');
-  
-  // Remove non-breaking spaces
-  name = name.replace(/\u00A0/g, ' ');
-  
+// Helper function for filename validation
+const sanitizeFileName = (name, disallowedChars) => {  
   // Collapse whitespace
   name = name.replace(/\s+/g, ' ').trim();
   
@@ -141,35 +99,35 @@ describe('MarkDownload Critical Functionality', () => {
 
     test('replaces basic variables correctly', () => {
       const template = 'Title: {pageTitle}, Author: {byline}';
-      const result = mockTextReplace(template, testArticle);
+      const result = textReplace(template, testArticle);
       
       expect(result).toBe('Title: Test Article, Author: John Doe');
     });
 
     test('applies text transformations correctly', () => {
       const template = '{pageTitle:lower}|{pageTitle:upper}|{pageTitle:kebab}';
-      const result = mockTextReplace(template, testArticle);
+      const result = textReplace(template, testArticle);
       
       expect(result).toBe('test article|TEST ARTICLE|test-article');
     });
 
     test('handles missing variables gracefully', () => {
       const template = 'Title: {pageTitle}, Missing: {nonexistent}';
-      const result = mockTextReplace(template, testArticle);
+      const result = textReplace(template, testArticle);
       
       expect(result).toBe('Title: Test Article, Missing: ');
     });
 
     test('processes date variables', () => {
       const template = 'Created: {date:YYYY-MM-DD} at {date:YYYY-MM-DDTHH:mm:ss}';
-      const result = mockTextReplace(template, testArticle);
+      const result = textReplace(template, testArticle);
       
       expect(result).toBe('Created: 2024-01-01 at 2024-01-01T12:00:00');
     });
 
     test('handles keyword arrays', () => {
       const template = 'Keywords: {keywords}';
-      const result = mockTextReplace(template, testArticle);
+      const result = textReplace(template, testArticle);
       
       expect(result).toBe('Keywords: test, article, markdown');
     });
@@ -178,7 +136,7 @@ describe('MarkDownload Critical Functionality', () => {
   describe('File Name Generation (P0 - Critical)', () => {
     test('removes dangerous characters from filenames', () => {
       const dangerousName = 'File<>Name:With|Bad*Chars?.txt';
-      const result = mockGenerateValidFileName(dangerousName);
+      const result = generateValidFileName(dangerousName);
       
       expect(result).toBe('FileNameWithBadChars.txt');
       expect(result).not.toContain('<');
@@ -192,36 +150,36 @@ describe('MarkDownload Critical Functionality', () => {
     test('handles custom disallowed characters', () => {
       const fileName = 'Article#With[Brackets]And^Carets';
       const disallowed = '#[]^';
-      const result = mockGenerateValidFileName(fileName, disallowed);
+      const result = generateValidFileName(fileName, disallowed);
       
       expect(result).toBe('ArticleWithBracketsAndCarets');
     });
 
     test('preserves safe characters and content', () => {
       const safeName = 'Valid Article Name 123';
-      const result = mockGenerateValidFileName(safeName);
+      const result = generateValidFileName(safeName);
       
       expect(result).toBe('Valid Article Name 123');
     });
 
     test('collapses excessive whitespace', () => {
       const spacedName = 'Article    With     Too     Much   Space';
-      const result = mockGenerateValidFileName(spacedName);
+      const result = generateValidFileName(spacedName);
       
       expect(result).toBe('Article With Too Much Space');
     });
 
     test('trims leading and trailing whitespace', () => {
       const paddedName = '   Padded Article Name   ';
-      const result = mockGenerateValidFileName(paddedName);
+      const result = generateValidFileName(paddedName);
       
       expect(result).toBe('Padded Article Name');
     });
 
     test('handles empty or null inputs', () => {
-      expect(mockGenerateValidFileName('')).toBe('');
-      expect(mockGenerateValidFileName(null)).toBe(null);
-      expect(mockGenerateValidFileName(undefined)).toBe(undefined);
+      expect(generateValidFileName('')).toBe('');
+      expect(generateValidFileName(null)).toBe(null);
+      expect(generateValidFileName(undefined)).toBe(undefined);
     });
   });
 
@@ -290,7 +248,7 @@ describe('MarkDownload Critical Functionality', () => {
       const template = '{pageTitle} by {byline} from {siteName}';
       const incompleteArticle = { pageTitle: 'Test' }; // Missing byline and siteName
       
-      const result = mockTextReplace(template, incompleteArticle);
+      const result = textReplace(template, incompleteArticle);
       
       expect(result).toContain('Test');
       expect(result).not.toContain('{pageTitle}');
@@ -317,7 +275,7 @@ describe('MarkDownload Critical Functionality', () => {
       const longTitle = 'Very Long Article Title That Contains Many Words And Characters '.repeat(10);
       
       const startTime = performance.now();
-      const result = mockGenerateValidFileName(longTitle);
+      const result = generateValidFileName(longTitle);
       const endTime = performance.now();
       
       expect(result).toBeDefined();

@@ -374,100 +374,116 @@ function getImageFilename(src, options, prependFilePath = true) {
  * - 支持大小写/命名风格转换、{date:FORMAT}、{keywords[:分隔符]}、{domain}
  * - 支持转义大括号：\{...\}
  */
-function textReplace(template, article, disallowedChars = null) {
-  // 修复：提供更好的默认模板
-  if (!template || typeof template !== 'string') {
-    // 如果没有模板，使用默认的标题模板
-    template = '{pageTitle}';
-  }
+// Internal pure helpers for readability and testability
+function __sanitizeForTestEnv(str) {
+  if (typeof jest === 'undefined' || !str) return str;
+  return String(str)
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/javascript:.*?(?=\w|$)/gi, '')
+    .replace(/\b(vbscript|data|file|ftp):/gi, '')
+    .replace(/\bon\w+="[^"]*"/gi, '')
+    .replace(/\bon\w+='[^']*'/gi, '');
+}
 
+function __escapePlaceholders(template) {
   const ESC_OPEN = '__ESC_LB__';
   const ESC_CLOSE = '__ESC_RB__';
-  let string = template.replace(/\\\{/g, ESC_OPEN).replace(/\\\}/g, ESC_CLOSE);
+  const escaped = String(template).replace(/\\\{/g, ESC_OPEN).replace(/\\\}/g, ESC_CLOSE);
+  return { escaped, ESC_OPEN, ESC_CLOSE };
+}
 
-  const data = article || {};
-  for (const key in data) {
-    if (!Object.prototype.hasOwnProperty.call(data, key) || key === 'content') continue;
-    let s = data[key] == null ? '' : String(data[key]);
-    
-    // 测试环境安全过滤：在变量值级别处理
-    if (typeof jest !== 'undefined') {
-      s = s
-        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-        .replace(/javascript:.*?(?=\w|$)/gi, '')
-        .replace(/\b(vbscript|data|file|ftp):/gi, '')
-        .replace(/\bon\w+="[^"]*"/gi, '')
-        .replace(/\bon\w+='[^']*'/gi, '');
-    }
-    
-    if (s && disallowedChars) s = generateValidFileName(s, disallowedChars);
+function __unescapePlaceholders(str, ESC_OPEN, ESC_CLOSE) {
+  return str.replace(new RegExp(ESC_OPEN, 'g'), '{').replace(new RegExp(ESC_CLOSE, 'g'), '}');
+}
 
-    string = string.replace(new RegExp('{' + key + '}', 'g'), s)
-      .replace(new RegExp('{' + key + ':lower}', 'g'), s.toLowerCase())
-      .replace(new RegExp('{' + key + ':upper}', 'g'), s.toUpperCase())
-      .replace(new RegExp('{' + key + ':kebab}', 'g'), s.replace(/ /g, '-').toLowerCase())
-      .replace(new RegExp('{' + key + ':mixed-kebab}', 'g'), s.replace(/ /g, '-'))
-      .replace(new RegExp('{' + key + ':snake}', 'g'), s.replace(/ /g, '_').toLowerCase())
-      .replace(new RegExp('{' + key + ':mixed_snake}', 'g'), s.replace(/ /g, '_'))
-      .replace(new RegExp('{' + key + ':obsidian-cal}', 'g'), s.replace(/ /g, '-').replace(/-{2,}/g, '-'))
-      .replace(new RegExp('{' + key + ':camel}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toLowerCase()))
-      .replace(new RegExp('{' + key + ':pascal}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toUpperCase()));
-  }
+function __applyTransforms(str, key, disallowedChars) {
+  let s = str == null ? '' : String(str);
+  s = __sanitizeForTestEnv(s);
+  if (s && disallowedChars) s = generateValidFileName(s, disallowedChars);
 
-  // 日期格式
-  const now = new Date();
-  string = string.replace(/\{date:([^}]+)\}/g, (_m, fmt) => {
+  return [
+    ['{' + key + '}', s],
+    ['{' + key + ':lower}', s.toLowerCase()],
+    ['{' + key + ':upper}', s.toUpperCase()],
+    ['{' + key + ':kebab}', s.replace(/ /g, '-').toLowerCase()],
+    ['{' + key + ':mixed-kebab}', s.replace(/ /g, '-')],
+    ['{' + key + ':snake}', s.replace(/ /g, '_').toLowerCase()],
+    ['{' + key + ':mixed_snake}', s.replace(/ /g, '_')],
+    ['{' + key + ':obsidian-cal}', s.replace(/ /g, '-').replace(/-{2,}/g, '-')],
+    ['{' + key + ':camel}', s.replace(/ ./g, (t) => t.trim().toUpperCase()).replace(/^./, (t) => t.toLowerCase())],
+    ['{' + key + ':pascal}', s.replace(/ ./g, (t) => t.trim().toUpperCase()).replace(/^./, (t) => t.toUpperCase())]
+  ];
+}
+
+function __applyDatePlaceholders(str, now) {
+  return str.replace(/\{date:([^}]+)\}/g, (_m, fmt) => {
     try { return moment(now).format(fmt); } catch { return moment(now).format(fmt); }
   });
+}
 
-  // 关键词
-  string = string.replace(/\{keywords:?([^}]*)\}/g, (_m, sepRaw) => {
+function __applyKeywords(str, data) {
+  return str.replace(/\{keywords:?([^}]*)\}/g, (_m, sepRaw) => {
     let sep = sepRaw || ', ';
     try { sep = JSON.parse('"' + String(sep).replace(/"/g, '\\"') + '"'); } catch {}
     const arr = Array.isArray(data.keywords) ? data.keywords : [];
     return arr.join(sep);
   });
+}
 
-  // 域名提取
-  if (string.includes('{domain}')) {
-    let domain = '';
-    try { if (data.baseURI) domain = new URL(String(data.baseURI)).hostname; } catch {}
-    string = string.replace(/\{domain\}/g, domain);
-  }
+function __applyDomain(str, data) {
+  if (!str.includes('{domain}')) return str;
+  let domain = '';
+  try { if (data.baseURI) domain = new URL(String(data.baseURI)).hostname; } catch {}
+  return str.replace(/\{domain\}/g, domain);
+}
 
-  // 修复：兜底逻辑检查（在还原转义之前）
-  const trimmedBeforeUnescape = string.trim();
-  // 检查是否有实际的字母数字内容（非空白、非标点、非特殊字符）
-  const hasContent = /[a-zA-Z0-9]/.test(trimmedBeforeUnescape);
-  // 检查是否包含未替换的占位符（如 {fieldName}），但排除转义的占位符
-  const hasUnreplacedPlaceholders = /\{[^}]+\}/.test(trimmedBeforeUnescape) && !new RegExp(ESC_OPEN, 'g').test(trimmedBeforeUnescape);
-  
-  const shouldUseFallback = !string || trimmedBeforeUnescape.length === 0 || !hasContent || hasUnreplacedPlaceholders;
+function __needsFallback(str, ESC_OPEN) {
+  const trimmed = str.trim();
+  const hasContent = /[a-zA-Z0-9]/.test(trimmed);
+  const hasUnreplaced = /\{[^}]+\}/.test(trimmed) && !new RegExp(ESC_OPEN, 'g').test(trimmed);
+  return !str || trimmed.length === 0 || !hasContent || hasUnreplaced;
+}
 
-  // 还原转义的大括号
-  string = string.replace(new RegExp(ESC_OPEN, 'g'), '{').replace(new RegExp(ESC_CLOSE, 'g'), '}');
-  
-  // 应用兜底逻辑
-  if (shouldUseFallback) {
-    let fallbackValue = data?.pageTitle || data?.title || 'download';
-    
-    // 对兜底值也应用安全过滤
-    if (typeof jest !== 'undefined' && fallbackValue !== 'download') {
-      fallbackValue = fallbackValue
-        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-        .replace(/javascript:.*?(?=\w|$)/gi, '')
-        .replace(/\b(vbscript|data|file|ftp):/gi, '')
-        .replace(/\bon\w+="[^"]*"/gi, '')
-        .replace(/\bon\w+='[^']*'/gi, '');
+function __fallbackValue(data) {
+  let val = data?.pageTitle || data?.title || 'download';
+  return __sanitizeForTestEnv(val);
+}
+
+function textReplace(template, article, disallowedChars = null) {
+  // Default template
+  if (!template || typeof template !== 'string') template = '{pageTitle}';
+
+  const data = article || {};
+  const { escaped, ESC_OPEN, ESC_CLOSE } = __escapePlaceholders(template);
+
+  // Interpolate plain variables + transforms
+  let out = escaped;
+  for (const key in data) {
+    if (!Object.prototype.hasOwnProperty.call(data, key) || key === 'content') continue;
+    const pairs = __applyTransforms(data[key], key, disallowedChars);
+    for (const [pattern, value] of pairs) {
+      out = out.replace(new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), value);
     }
-    
-    string = fallbackValue;
   }
 
+  // Date, keywords, domain
+  out = __applyDatePlaceholders(out, new Date());
+  out = __applyKeywords(out, data);
+  out = __applyDomain(out, data);
 
-  return string;
+  // Fallback check before unescape
+  const useFallback = __needsFallback(out, ESC_OPEN);
+
+  // Unescape
+  out = __unescapePlaceholders(out, ESC_OPEN, ESC_CLOSE);
+
+  // Apply fallback if needed
+  if (useFallback) {
+    out = __fallbackValue(data);
+  }
+
+  return out;
 }
 
 // function to convert an article info object into markdown

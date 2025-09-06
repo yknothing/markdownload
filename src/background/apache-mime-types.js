@@ -770,4 +770,6 @@ const mimedb = {
 "video/x-sgi-movie":"movie",
 "video/x-smv":"smv",
 "x-conference/x-cooltalk":"ice"
-}
+};
+
+module.exports = mimedb;

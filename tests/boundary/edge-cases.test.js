@@ -1,5 +1,6 @@
 /**
  * Edge Cases Test Suite for MarkDownload
+ * REFACTORED: Using real business logic functions from background.js
  * 
  * Tests special edge cases, unusual inputs, and corner conditions
  * that might break normal processing logic.
@@ -17,6 +18,12 @@ const {
 } = require('../config/boundary-constants');
 
 const testHelpers = require('../utils/testHelpers');
+const {
+  generateValidFileName,
+  turndown,
+  textReplace,
+  convertArticleToMarkdown
+} = require('../../src/background/background.js');
 
 // Setup test environment
 beforeEach(() => {
@@ -29,21 +36,7 @@ afterEach(() => {
 
 describe('🎭 Edge Cases - Null and Undefined Handling', () => {
   
-  // Load MarkDownload functions
-  let generateValidFileName, textReplace, turndown;
-  
-  beforeAll(() => {
-    try {
-      const backgroundModule = testHelpers.loadSourceModule('background/background.js');
-      generateValidFileName = backgroundModule.generateValidFileName || testHelpers.mockGenerateValidFileName;
-      textReplace = backgroundModule.textReplace || testHelpers.mockTextReplace;
-      turndown = backgroundModule.turndown || testHelpers.mockTurndown;
-    } catch (error) {
-      generateValidFileName = testHelpers.mockGenerateValidFileName;
-      textReplace = testHelpers.mockTextReplace;
-      turndown = testHelpers.mockTurndown;
-    }
-  });
+  // Real business logic functions are imported at module level
 
   describe('Empty and Null Value Processing', () => {
     

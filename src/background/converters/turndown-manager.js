@@ -263,10 +263,10 @@
 
     function convertToFencedCodeBlock(node, options) {
       node.innerHTML = node.innerHTML.replace(/<br-keep><\/br-keep>/g, '<br>');
-      const langMatch = node.id?.match(/code-lang-(.+)/);
+      const langMatch = node.className?.match(/language-(.+)/) || node.className?.match(/lang-(.+)/);
       const language = langMatch?.length > 0 ? langMatch[1] : '';
 
-      const code = node.innerText;
+      const code = node.innerText || node.textContent || "";
       const fenceChar = options.fence.charAt(0);
       let fenceSize = 3;
 

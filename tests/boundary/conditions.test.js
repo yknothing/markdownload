@@ -1,5 +1,6 @@
 /**
  * Boundary Conditions Test Suite for MarkDownload
+ * REFACTORED: Using real business logic functions from background.js
  * 
  * Tests extreme values, edge cases, and boundary conditions to ensure
  * robust handling of input validation and system limits.
@@ -24,6 +25,12 @@ const {
 
 // Import MarkDownload modules for testing
 const testHelpers = require('../utils/testHelpers');
+const {
+  generateValidFileName,
+  turndown,
+  textReplace,
+  convertArticleToMarkdown
+} = require('../../src/background/background.js');
 
 // Setup test environment
 beforeEach(() => {
@@ -153,15 +160,8 @@ describe('🔍 Boundary Conditions - Input Validation', () => {
 
 describe('🎯 Boundary Conditions - String Processing', () => {
   
-  // Load actual MarkDownload functions for testing
-  let generateValidFileName, textReplace;
-  
-  beforeAll(async () => {
-    // For boundary testing, use mock implementations that respect boundaries
-    // These mocks have proper boundary checks that the real functions may not have
-    generateValidFileName = testHelpers.mockGenerateValidFileName;
-    textReplace = testHelpers.mockTextReplace;
-  });
+  // Real business logic functions are imported at module level
+  // Boundary testing now uses actual implementation to test real behavior
 
   describe('Filename Generation Boundaries', () => {
     test('should handle empty string input', () => {

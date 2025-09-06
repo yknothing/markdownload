@@ -297,34 +297,12 @@ global.testTurndownConversion = (html, options = {}) => {
   return service.turndown(html);
 };
 
-// Ensure critical extension functions are available globally for tests
-if (!global.generateValidFileName) {
-  global.generateValidFileName = jest.fn().mockImplementation((title, disallowedChars = null) => {
-    if (!title) return '';
-    const maxLength = 255; // MAX_FILENAME_LENGTH boundary
-    const sanitized = title.toString().replace(/[\/\?<>\\:\*\|":]/g, '').substring(0, maxLength);
-    if (disallowedChars) {
-      const disallowedRe = new RegExp(`[${disallowedChars.replace(/[\[\]\\-]/g, '\\$&')}]`, 'g');
-      return sanitized.replace(disallowedRe, '');
-    }
-    return sanitized;
-  });
-}
+// REMOVED: Global generateValidFileName mock - Use real implementation from background.js
 
 // Don't create global isValidFilename - let tests import what they need
 // This avoids conflicts with test-specific imports from boundary-constants
 
-if (!global.textReplace) {
-  global.textReplace = jest.fn().mockImplementation((content, replacements) => {
-    if (!content || !replacements) return content;
-    let result = content;
-    for (const [key, value] of Object.entries(replacements)) {
-      const regex = new RegExp(`{${key}}`, 'g');
-      result = result.replace(regex, value || '');
-    }
-    return result;
-  });
-}
+// REMOVED: Global textReplace mock - Use real implementation from background.js
 
 // Mock the main turndown function that appears in background.js
 global.turndown = jest.fn((content, options = {}, article = {}) => {

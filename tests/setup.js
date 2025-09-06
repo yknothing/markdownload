@@ -187,56 +187,9 @@ global.DOMParser = jest.fn(() => ({
   })
 }));
 
-// Mock CodeMirror
-global.CodeMirror = {
-  fromTextArea: jest.fn(() => ({
-    getValue: jest.fn(),
-    setValue: jest.fn(),
-    getSelection: jest.fn(),
-    somethingSelected: jest.fn(() => false),
-    refresh: jest.fn(),
-    on: jest.fn()
-  }))
-};
+// CodeMirror mock moved to individual test files when needed
 
-// Mock moment.js with comprehensive date formatting
-global.moment = jest.fn().mockImplementation(() => ({
-  format: jest.fn().mockImplementation((format) => {
-    // Use a consistent test date for all formats
-    if (format === 'YYYY-MM-DD') return '2024-01-15';
-    if (format === 'YYYY-MM-DDTHH:mm:ss') return '2024-01-15T14:30:00';
-    if (format === 'HH:mm:ss') return '14:30:00';
-    if (format === 'YYYY') return '2024';
-    if (format === 'MM') return '01';
-    if (format === 'DD') return '15';
-    if (format === 'HH') return '14';
-    if (format === 'mm') return '30';
-    if (format === 'ss') return '00';
-    
-    // For complex formats, try to parse common patterns
-    if (format && format.includes && format.includes('YYYY')) {
-      let result = format;
-      result = result.replace(/YYYY/g, '2024');
-      result = result.replace(/MM/g, '01');
-      result = result.replace(/DD/g, '15');
-      result = result.replace(/HH/g, '14');
-      result = result.replace(/mm/g, '30');
-      result = result.replace(/ss/g, '00');
-      return result;
-    }
-    
-    // Fallback for time-only formats
-    if (format && format.includes && (format.includes('HH') || format.includes('mm') || format.includes('ss'))) {
-      let result = format;
-      result = result.replace(/HH/g, '14');
-      result = result.replace(/mm/g, '30');
-      result = result.replace(/ss/g, '00');
-      return result;
-    }
-    
-    return '2024-01-15';
-  })
-}));
+// moment mock moved to individual test files when needed
 
 // Setup polyfills first
 const { TextEncoder, TextDecoder } = require('util');
@@ -253,11 +206,8 @@ const { window } = new JSDOM('<!doctype html><html><body></body></html>', {
 global.window = window;
 global.document = window.document;
 global.navigator = {
-  ...window.navigator,
-  clipboard: {
-    writeText: jest.fn().mockResolvedValue(),
-    readText: jest.fn().mockResolvedValue('clipboard content')
-  }
+  ...window.navigator
+  // clipboard mock moved to individual test files when needed
 };
 
 // Set up a proper location mock
@@ -271,27 +221,9 @@ global.performance = {
   now: jest.fn(() => Date.now())
 };
 
-// Mock window.getComputedStyle for DOM tests
-global.getComputedStyle = jest.fn((element) => ({
-  getPropertyValue: jest.fn((property) => {
-    if (property === 'display') return 'block';
-    if (property === 'visibility') return 'visible';
-    return '';
-  })
-}));
+// getComputedStyle mock moved to individual test files when needed
 
-// Add getComputedStyle to window as well
-global.window.getComputedStyle = global.getComputedStyle;
-
-// Mock XMLHttpRequest for image downloading tests
-global.XMLHttpRequest = jest.fn(() => ({
-  open: jest.fn(),
-  send: jest.fn(),
-  onload: null,
-  onerror: null,
-  response: new Blob(['test'], { type: 'image/jpeg' }),
-  responseType: 'blob'
-}));
+// XMLHttpRequest mock moved to individual test files when needed
 
 // OPTIMIZED Console helpers for testing - minimal mocking
 const originalConsole = global.console;

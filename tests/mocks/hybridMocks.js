@@ -6,12 +6,12 @@
  * The goal is to increase branch coverage by testing actual code paths.
  */
 
-// Import the real TurndownService for use in tests
+// First, set up browser mocks before importing any modules that use browser APIs
+require('./browserMocks.js');
+
+// Import the real TurndownService and set it up globally before importing background.js
 const RealTurndownService = require('turndown');
 const realTurndownPluginGfm = require('turndown-plugin-gfm');
-
-// Mock browser APIs but allow real business logic
-require('./browserMocks.js');
 
 // Create a hybrid TurndownService that uses real conversion logic
 class HybridTurndownService {
@@ -70,11 +70,12 @@ HybridTurndownService.prototype.defaultEscape = function(text) {
   return text.replace(/[\\`*_{}[\]()#+\-.!]/g, '\\$&');
 };
 
-// Replace the global TurndownService with our hybrid version
+// Set up globals that background.js expects BEFORE importing it
 global.TurndownService = HybridTurndownService;
-
-// Use the real turndown plugin GFM
 global.turndownPluginGfm = realTurndownPluginGfm;
+
+// NOW we can safely import background.js with all dependencies set up
+const { textReplace: realTextReplace, generateValidFileName: realGenerateValidFileName, validateUri: realValidateUri, base64EncodeUnicode: realBase64EncodeUnicode } = require('../../src/background/background.js');
 
 // Create a real turndown function that executes actual business logic
 global.turndown = function(content, options = {}, article = {}) {
@@ -192,161 +193,16 @@ global.turndown = function(content, options = {}, article = {}) {
   return { markdown, imageList };
 };
 
-// Implement real textReplace function
-global.textReplace = function(content, article) {
-  if (!content || !article) return content || '';
-  
-  let result = content;
-  
-  // Replace template variables with real logic
-  const replacements = {
-    pageTitle: article.pageTitle || article.title || '',
-    title: article.pageTitle || article.title || '',
-    byline: article.byline || article.author || '',
-    author: article.byline || article.author || '',
-    excerpt: article.excerpt || '',
-    content: article.textContent || article.content || '',
-    baseURI: article.baseURI || article.url || '',
-    url: article.baseURI || article.url || '',
-    siteName: article.siteName || '',
-    date: new Date().toISOString().split('T')[0], // YYYY-MM-DD format
-    time: new Date().toISOString().split('T')[1].split('.')[0], // HH:mm:ss format
-    keywords: Array.isArray(article.keywords) ? article.keywords.join(',') : (article.keywords || '')
-  };
-
-  // Handle date formatting patterns
-  const dateFormatPatterns = {
-    'YYYY-MM-DD': () => new Date().toISOString().split('T')[0],
-    'YYYY-MM-DDTHH:mm:ss': () => new Date().toISOString().split('.')[0],
-    'DD/MM/YYYY': () => {
-      const date = new Date();
-      return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
-    }
-  };
-
-  // Replace date patterns
-  Object.entries(dateFormatPatterns).forEach(([pattern, formatter]) => {
-    const regex = new RegExp(`{date:${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}}`, 'g');
-    result = result.replace(regex, formatter());
-  });
-
-  // Replace standard variables (skip keywords - handle separately)
-  Object.entries(replacements).forEach(([key, value]) => {
-    if (key !== 'keywords') {
-      const regex = new RegExp(`{${key}}`, 'g');
-      result = result.replace(regex, value);
-    }
-  });
-
-  // Handle keywords with proper separator logic
-  const keywordRegex = /{keywords(?::([^}]+))?}/g;
-  let keywordMatch;
-  while ((keywordMatch = keywordRegex.exec(result)) !== null) {
-    const fullMatch = keywordMatch[0];
-    let separator = keywordMatch[1] || ', '; // Default separator with space
-    
-    if (Array.isArray(article.keywords)) {
-      // Sanitize keywords to prevent script injection
-      const sanitizedKeywords = article.keywords.map(keyword => {
-        if (typeof keyword === 'string') {
-          // Remove script tags, javascript: protocols, and dangerous HTML
-          return keyword
-            .replace(/<script[^>]*>.*?<\/script>/gi, '')
-            .replace(/javascript:\s*/gi, '')
-            .replace(/data:text\/html[^>]*/gi, '')
-            .replace(/<[^>]*on\w+\s*=[^>]*>/gi, '')
-            .replace(/<(iframe|object|embed)[^>]*>/gi, '');
-        }
-        return keyword;
-      });
-      const keywordsString = sanitizedKeywords.join(separator);
-      result = result.replace(new RegExp(fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), keywordsString);
-    } else {
-      // Sanitize single keyword
-      let sanitizedKeyword = article.keywords || '';
-      if (typeof sanitizedKeyword === 'string') {
-        sanitizedKeyword = sanitizedKeyword
-          .replace(/<script[^>]*>.*?<\/script>/gi, '')
-          .replace(/javascript:\s*/gi, '')
-          .replace(/data:text\/html[^>]*/gi, '')
-          .replace(/<[^>]*on\w+\s*=[^>]*>/gi, '')
-          .replace(/<(iframe|object|embed)[^>]*>/gi, '');
-      }
-      result = result.replace(new RegExp(fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), sanitizedKeyword);
-    }
-  }
-
-  return result;
-};
-
-// Implement real generateValidFileName function
-global.generateValidFileName = function(title, disallowedChars = null) {
-  if (!title) return '';
-  
-  const maxLength = 255;
-  
-  // Remove or replace dangerous filename characters
-  let sanitized = title.toString()
-    .replace(/[\/\?<>\\:\*\|":]/g, '') // Remove dangerous chars
-    .replace(/\s+/g, ' ') // Normalize whitespace
-    .trim()
-    .substring(0, maxLength);
-  
-  // Apply additional disallowed characters if provided
-  if (disallowedChars) {
-    const disallowedRe = new RegExp(`[${disallowedChars.replace(/[\[\]\\-]/g, '\\$&')}]`, 'g');
-    sanitized = sanitized.replace(disallowedRe, '');
-  }
-  
-  return sanitized;
-};
+// Use real business functions from background module
+global.textReplace = realTextReplace;
+global.generateValidFileName = realGenerateValidFileName;
+global.validateUri = realValidateUri;
+global.base64EncodeUnicode = realBase64EncodeUnicode;
 
 // Implement real cleanAttribute function
 global.cleanAttribute = function(attr) {
   if (!attr || typeof attr !== 'string') return '';
   return attr.trim().replace(/\s+/g, ' ');
-};
-
-// Implement real validateUri function
-global.validateUri = function(uri, baseURI = '') {
-  if (!uri) return '';
-  
-  try {
-    // If it's already absolute, return as-is
-    if (uri.startsWith('http://') || uri.startsWith('https://') || uri.startsWith('data:')) {
-      return uri;
-    }
-    
-    // If it starts with //, prepend https:
-    if (uri.startsWith('//')) {
-      return 'https:' + uri;
-    }
-    
-    // If it's relative and we have a baseURI, combine them
-    if (baseURI) {
-      const base = baseURI.endsWith('/') ? baseURI.slice(0, -1) : baseURI;
-      const path = uri.startsWith('/') ? uri : '/' + uri;
-      return base + path;
-    }
-    
-    return uri;
-  } catch (e) {
-    return uri;
-  }
-};
-
-// Implement real base64EncodeUnicode function
-global.base64EncodeUnicode = function(str) {
-  if (!str) return '';
-  try {
-    // Handle Unicode properly
-    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
-      function toSolidBytes(match, p1) {
-        return String.fromCharCode('0x' + p1);
-      }));
-  } catch (e) {
-    return str;
-  }
 };
 
 // Template validation function

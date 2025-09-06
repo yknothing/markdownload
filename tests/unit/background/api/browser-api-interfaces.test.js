@@ -58,7 +58,6 @@ const mockInterfaces = {
       getManifest() { throw new Error('IRuntimeApi.getManifest must be implemented'); }
     }
   };
-};
 
 // Try to load actual interfaces, fall back to mocks
 try {

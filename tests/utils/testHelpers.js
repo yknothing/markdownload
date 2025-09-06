@@ -357,100 +357,9 @@ function teardownEach() {
  * Magic Number Guardian - Test Function Mocks
  */
 
-/**
- * Mock implementation of generateValidFileName for testing
- */
-function mockGenerateValidFileName(title, disallowedChars = null) {
-  if (!title) return title;
-  title = title + '';
-  
-  // Remove illegal characters
-  var illegalRe = /[\/\?<>\\:\*\|":]/g;
-  var name = title.replace(illegalRe, "").replace(new RegExp('\u00A0', 'g'), ' ')
-      .replace(new RegExp(/\s+/, 'g'), ' ')
-      .trim();
+// REMOVED: mockGenerateValidFileName - Use real implementation from background.js
 
-  if (disallowedChars) {
-    for (let c of disallowedChars) {
-      if (`[\\^$.|?*+()`.includes(c)) c = `\\${c}`;
-      name = name.replace(new RegExp(c, 'g'), '');
-    }
-  }
-  
-  // Ensure maximum filename length
-  if (name.length > 255) {
-    name = name.substring(0, 255);
-  }
-  
-  return name;
-}
-
-/**
- * Mock implementation of textReplace for testing
- */
-function mockTextReplace(string, article, disallowedChars = null) {
-  if (!string || typeof string !== 'string') return '';
-  if (!article || typeof article !== 'object') return string;
-  
-  let result = string;
-  
-  // Replace article properties first (skip keywords - handle separately)
-  for (const key in article) {
-    if (article.hasOwnProperty(key) && key !== "content" && key !== "keywords") {
-      let s = (article[key] || '') + '';
-      if (s && disallowedChars) s = mockGenerateValidFileName(s, disallowedChars);
-
-      result = result.replace(new RegExp('{' + key + '}', 'g'), s)
-        .replace(new RegExp('{' + key + ':lower}', 'g'), s.toLowerCase())
-        .replace(new RegExp('{' + key + ':upper}', 'g'), s.toUpperCase())
-        .replace(new RegExp('{' + key + ':kebab}', 'g'), s.replace(/ /g, '-').toLowerCase())
-        .replace(new RegExp('{' + key + ':snake}', 'g'), s.replace(/ /g, '_').toLowerCase())
-        .replace(new RegExp('{' + key + ':camel}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toLowerCase()))
-        .replace(new RegExp('{' + key + ':pascal}', 'g'), s.replace(/ ./g, (str) => str.trim().toUpperCase()).replace(/^./, (str) => str.toUpperCase()));
-    }
-  }
-
-  // Replace date formats with properly formatted mock dates
-  result = result.replace(/{date:YYYY-MM-DD}/g, '2024-01-01');
-  result = result.replace(/{date:YYYY-MM-DDTHH:mm:ss}/g, '2024-01-01T12:00:00');
-  // Handle other date formats
-  result = result.replace(/{date:(.+?)}/g, (match, format) => {
-    // Return appropriate formatted date based on format
-    if (format === 'YYYY-MM-DD') return '2024-01-01';
-    if (format === 'YYYY-MM-DDTHH:mm:ss') return '2024-01-01T12:00:00';
-    return '2024-01-01T12:00:00Z';
-  });
-
-  // Replace keywords with proper separator handling and security sanitization
-  if (article.keywords && Array.isArray(article.keywords)) {
-    // Sanitize keywords to prevent script injection
-    const sanitizedKeywords = article.keywords.map(keyword => {
-      if (typeof keyword === 'string') {
-        // Remove script tags, javascript: protocols, and dangerous HTML
-        return keyword
-          .replace(/<script[^>]*>.*?<\/script>/gi, '')
-          .replace(/javascript:\s*/gi, '')
-          .replace(/data:text\/html[^>]*/gi, '')
-          .replace(/<[^>]*on\w+\s*=[^>]*>/gi, '')
-          .replace(/<(iframe|object|embed)[^>]*>/gi, '');
-      }
-      return keyword;
-    });
-    
-    // Handle {keywords} without separator first
-    result = result.replace(/{keywords}(?!:)/g, sanitizedKeywords.join(', '));
-    
-    // Handle {keywords:separator} format
-    result = result.replace(/{keywords:([^}]+)}/g, (match, separator) => {
-      return sanitizedKeywords.join(separator); // Don't trim separator to preserve spaces
-    });
-  }
-
-  // Clean up any remaining unmatched placeholders
-  result = result.replace(/{[^}]*}/g, '');
-
-  return result;
-}
+// REMOVED: mockTextReplace - Use real implementation from background.js
 
 /**
  * Mock implementation of turndown for testing
@@ -642,11 +551,12 @@ function createMockModule(modulePath) {
     mockModule.convertArticleToMarkdown = jest.fn().mockResolvedValue('# Mock Markdown');
     mockModule.processPage = jest.fn().mockResolvedValue({ success: true });
     mockModule.notify = jest.fn();
-    mockModule.generateValidFileName = jest.fn().mockImplementation((title) => {
-      if (!title) return '';
-      return title.toString().replace(/[\/\?<>\\:\*\|":]/g, '').substring(0, 100);
-    });
-    mockModule.textReplace = jest.fn().mockImplementation((content, replacements) => content);
+    mockModule.generateValidFileName = function(title) {
+      throw new Error('generateValidFileName not available: load real module from src/background/background.js');
+    };
+    mockModule.textReplace = function(content, replacements) {
+      throw new Error('textReplace not available: load real module from src/background/background.js');
+    };
     mockModule.downloadFile = jest.fn().mockResolvedValue({ success: true });
   }
   
@@ -855,8 +765,7 @@ module.exports = {
   teardownEach,
   
   // Enhanced functions for boundary testing
-  mockGenerateValidFileName,
-  mockTextReplace,
+  // REMOVED: mockGenerateValidFileName, mockTextReplace - Use real implementations from background.js
   mockTurndown,
   mockConvertArticleToMarkdown,
   loadSourceModule,
@@ -867,4 +776,177 @@ module.exports = {
   performanceUtils,
   securityTestUtils,
   boundaryTestUtils
+};
+
+/**
+ * Environment Configuration Provider
+ * Replaces typeof jest !== 'undefined' checks with injectable configuration
+ */
+class EnvironmentConfig {
+  constructor(config = {}) {
+    this.config = {
+      isTestEnvironment: true,
+      dateProvider: new DateProvider(),
+      ...config
+    };
+  }
+
+  isTest() {
+    return this.config.isTestEnvironment;
+  }
+
+  getDateProvider() {
+    return this.config.dateProvider;
+  }
+
+  /**
+   * Get environment-specific value
+   * @param {any} testValue - Value to return in test environment
+   * @param {any} prodValue - Value to return in production environment
+   */
+  getValue(testValue, prodValue) {
+    return this.isTest() ? testValue : prodValue;
+  }
+
+  /**
+   * Execute environment-specific logic
+   * @param {function} testFn - Function to execute in test environment
+   * @param {function} prodFn - Function to execute in production environment
+   */
+  execute(testFn, prodFn) {
+    return this.isTest() ? testFn() : prodFn();
+  }
+}
+
+/**
+ * Date Provider for consistent date handling
+ * Replaces moment() calls with configurable date source
+ */
+class DateProvider {
+  constructor(options = {}) {
+    this.fixedDate = options.fixedDate || new Date('2024-01-15T10:30:00Z');
+    this.useFixed = options.useFixed !== false; // Default to true for tests
+  }
+
+  now() {
+    return this.useFixed ? new Date(this.fixedDate) : new Date();
+  }
+
+  format(date, format = 'YYYY-MM-DDTHH:mm:ss') {
+    const d = date || this.now();
+    
+    // Simple format replacements (can be enhanced as needed)
+    return format
+      .replace('YYYY', d.getFullYear())
+      .replace('MM', String(d.getMonth() + 1).padStart(2, '0'))
+      .replace('DD', String(d.getDate()).padStart(2, '0'))
+      .replace('HH', String(d.getHours()).padStart(2, '0'))
+      .replace('mm', String(d.getMinutes()).padStart(2, '0'))
+      .replace('ss', String(d.getSeconds()).padStart(2, '0'));
+  }
+
+  setFixedDate(date) {
+    this.fixedDate = new Date(date);
+  }
+
+  setUseFixed(useFixed) {
+    this.useFixed = useFixed;
+  }
+}
+
+/**
+ * Test Environment Factory
+ * Creates configured environment for different test scenarios
+ */
+function createTestEnvironment(overrides = {}) {
+  const config = new EnvironmentConfig({
+    isTestEnvironment: true,
+    dateProvider: new DateProvider({ 
+      fixedDate: new Date('2024-01-15T10:30:00Z'),
+      useFixed: true 
+    }),
+    ...overrides
+  });
+
+  return config;
+}
+
+/**
+ * Production Environment Factory
+ * Creates production-like environment for testing production behavior
+ */
+function createProductionEnvironment(overrides = {}) {
+  const config = new EnvironmentConfig({
+    isTestEnvironment: false,
+    dateProvider: new DateProvider({ 
+      useFixed: false 
+    }),
+    ...overrides
+  });
+
+  return config;
+}
+
+/**
+ * Mock moment function using DateProvider
+ * This replaces direct moment() calls in tests
+ */
+function createMomentMock(dateProvider) {
+  return function(dateString) {
+    const date = dateString ? new Date(dateString) : dateProvider.now();
+    
+    return {
+      format: (formatStr) => dateProvider.format(date, formatStr),
+      toDate: () => date,
+      valueOf: () => date.getTime(),
+      toString: () => date.toString(),
+      // Add more moment methods as needed
+      isValid: () => !isNaN(date.getTime()),
+      unix: () => Math.floor(date.getTime() / 1000)
+    };
+  };
+}
+
+// Update module exports to include new utilities
+module.exports = {
+  setupTestEnvironment,
+  resetTestEnvironment,
+  createMockArticle,
+  createMockDocument,
+  createMockTab,
+  createMockOptions,
+  createContentScriptResult,
+  waitForAsync,
+  simulateDownloadComplete,
+  createMockBlobURL,
+  verifyMarkdownOutput,
+  createMockContextMenuInfo,
+  simulateKeyboardCommand,
+  createTestImageBlob,
+  validateFileName,
+  mockClipboard,
+  simulateNetworkFailure,
+  createTemplateTestData,
+  validateTemplateReplacement,
+  setupEach,
+  teardownEach,
+  
+  // Enhanced functions for boundary testing
+  mockTurndown,
+  mockConvertArticleToMarkdown,
+  loadSourceModule,
+  createMockModule,
+  processDocument,
+  isValidUrl,
+  getMemoryUsage,
+  performanceUtils,
+  securityTestUtils,
+  boundaryTestUtils,
+  
+  // New environment configuration utilities
+  EnvironmentConfig,
+  DateProvider,
+  createTestEnvironment,
+  createProductionEnvironment,
+  createMomentMock
 };

@@ -1,19 +1,21 @@
 /**
  * Comprehensive API tests for file processing functions
+ * REFACTORED: Using real business logic functions from background.js
  * Tests file name generation, download handling, and storage operations
  */
 
-// Load the background functions - we'll need them for file processing tests
-let backgroundFunctions = {};
+// Import real business logic functions from background.js
+const {
+  generateValidFileName,
+  turndown,
+  textReplace,
+  convertArticleToMarkdown,
+  getImageFilename,
+  normalizeMarkdown,
+  validateUri,
+  base64EncodeUnicode
+} = require('../../../../src/background/background.js');
 beforeAll(() => {
-  const fs = require('fs');
-  const path = require('path');
-  
-  const backgroundSource = fs.readFileSync(
-    path.join(__dirname, '../../../../src/background/background.js'), 
-    'utf8'
-  );
-  
   // Set up comprehensive browser mock
   global.browser = global.browser || {};
   global.browser.runtime = global.browser.runtime || {};
@@ -21,6 +23,8 @@ beforeAll(() => {
   global.browser.runtime.getBrowserInfo = jest.fn().mockResolvedValue({ name: 'Chrome', version: '120.0.0.0' });
   global.browser.runtime.onMessage = { addListener: jest.fn() };
   global.browser.runtime.sendMessage = jest.fn();
+  global.browser.downloads = { download: jest.fn().mockResolvedValue(123) };
+  global.browser.storage = { sync: { get: jest.fn().mockResolvedValue({}) } };
   
   // Mock other dependencies
   global.TurndownService = jest.fn().mockImplementation(() => ({
@@ -45,41 +49,7 @@ beforeAll(() => {
     })
   }));
   
-  // Clean the background source and execute it to get functions
-  const cleanBackgroundSource = backgroundSource
-    .replace(/browser\.runtime\.getPlatformInfo\(\)\.then[\s\S]*?\}\);/, '// Platform info mocked')
-    .replace(/createMenus\(\)/, '// createMenus() mocked')
-    .replace(/browser\.runtime\.onMessage\.addListener\(notify\);/, '// onMessage mocked');
-  
-  // Use Function constructor to execute in a clean scope and return functions
-  const executeCode = new Function(`
-    ${cleanBackgroundSource}
-    return {
-      generateValidFileName,
-      textReplace,
-      validateUri,
-      base64EncodeUnicode,
-      getImageFilename,
-      cleanAttribute,
-      turndown
-    };
-  `);
-  
-  try {
-    backgroundFunctions = executeCode();
-    // Make functions available globally
-    Object.assign(global, backgroundFunctions);
-  } catch (error) {
-    console.error('Failed to load background functions:', error.message);
-    // Provide mock implementations as fallback
-    global.generateValidFileName = jest.fn(title => title || 'Untitled');
-    global.textReplace = jest.fn(template => template);
-    global.validateUri = jest.fn(uri => uri);
-    global.base64EncodeUnicode = jest.fn(str => btoa(str));
-    global.getImageFilename = jest.fn(src => 'image.jpg');
-    global.cleanAttribute = jest.fn(attr => attr || '');
-    global.turndown = jest.fn(content => content);
-  }
+  // Real functions are already imported and available
 });
 
 describe('File Processing API Tests', () => {
