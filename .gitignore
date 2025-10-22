@@ -31,6 +31,7 @@ playwright-report/
 test-artifacts/
 temp/
 temp-*/
+tests/tmp/
 
 # Logs and debug files
 *.log
@@ -96,6 +97,7 @@ test-extensions/
 
 # CI/CD artifacts
 .github/workflows/.coverage/
+health-check-report.json
 
 # Backup files
 *.backup

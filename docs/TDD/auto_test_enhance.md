@@ -1,5 +1,13 @@
 # MarkDownload 自动化测试优化执行规范（监督与验收版）
 
+使用入口（务必遵循）
+- 执行方法与当前阶段目标，请只看：`docs/TDD/PHASE_CURRENT.md`
+- 本规范仅在“门槛/告警规则/流程”变更时微调；原则章节保持稳定。
+
+当前质量门（以 CI 为准）
+- 覆盖率阈值（行）：22（见 `.github/workflows/quality-gates.yml`）
+- validateUri：告警非阻断（命中需在 PR 说明原因与收敛计划）
+
 更新时间：2025-09-05 (Phase 4 Completed)
 
 ## 文档定位与关系

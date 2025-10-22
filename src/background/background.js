@@ -1,3 +1,18 @@
+/**
+ * MarkDownload Background (Legacy/Hybrid)
+ *
+ * NOTE
+ * - This file contains legacy background logic and shared business helpers.
+ * - Widely used by unit/integration tests to exercise core conversion logic.
+ * - It is NOT referenced by manifest.json in the MV3 build and does not run
+ *   as the active service worker at runtime.
+ *
+ * The production service worker that ships is:
+ *   src/background/production-service-worker.js
+ */
+// Diagnostic flag (harmless for tests). Do not rely on this at runtime.
+self.__MD_BACKGROUND_ROLE = 'legacy-tests';
+
 // Import browser polyfill for cross-browser compatibility
 importScripts('../browser-polyfill.min.js');
 
@@ -158,10 +173,27 @@ const turndown = function(content, options, article) {
 
   function convertToFencedCodeBlock(node, options) {
     node.innerHTML = node.innerHTML.replaceAll('<br-keep></br-keep>', '<br>');
-    const langMatch = node.id?.match(/code-lang-(.+)/);
-    const language = langMatch?.length > 0 ? langMatch[1] : '';
 
-    const code = node.innerText;
+    // Extract language from className (standard format) or id (fallback format)
+    let language = '';
+
+    // Get className as string (handle both string and object representations)
+    const classNameStr = node.getAttribute('class') || node.className || '';
+
+    // Try className first (standard: class="language-javascript" or class="lang-javascript")
+    const classLangMatch = classNameStr.match(/language-([^\s]+)/) || classNameStr.match(/lang-([^\s]+)/);
+    if (classLangMatch?.length > 0) {
+      language = classLangMatch[1];
+    } else {
+      // Fallback to id attribute (format: id="code-lang-javascript")
+      const idStr = node.getAttribute('id') || node.id || '';
+      const idLangMatch = idStr.match(/code-lang-(.+)/);
+      if (idLangMatch?.length > 0) {
+        language = idLangMatch[1];
+      }
+    }
+
+    const code = node.innerText || node.textContent || '';
 
     const fenceChar = options.fence.charAt(0);
     let fenceSize = 3;
@@ -971,6 +1003,8 @@ async function getArticleFromDom(domString) {
       tex: mathSource.innerText,
       inline: type ? !type.includes('mode=display') : false
     });
+    // Remove the script after extracting its content
+    mathSource.parentNode?.removeChild(mathSource);
   });
 
   dom.body.querySelectorAll('[markdownload-latex]')?.forEach(mathJax3Node =>  {
@@ -1031,6 +1065,13 @@ async function getArticleFromDom(domString) {
   // Note: The document element is guaranteed to be the HTML tag because the 'text/html'
   // mime type was used when the DOM was created.
   dom.documentElement.removeAttribute('class')
+
+  // Remove all remaining script and style tags before Readability processes the DOM
+  // This prevents JavaScript code from being extracted as content
+  // Note: MathJax scripts have already been processed and removed above
+  dom.querySelectorAll('script:not([id^=MathJax-Element-]), style, noscript')?.forEach(element => {
+    element.parentNode?.removeChild(element);
+  });
 
   // simplify the dom into an article
   const article = new Readability(dom).parse();

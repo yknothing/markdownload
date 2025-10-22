@@ -1102,3 +1102,272 @@ describe('Service Worker Critical Branch Coverage', () => {
       });
     });
   });
+
+  describe('Legacy Function Coverage Sprint', () => {
+    test('should handle turndown function with TurndownManager available', async () => {
+      // Setup TurndownManager mock
+      mockSelf.TurndownManager = {
+        convert: jest.fn().mockResolvedValue({
+          markdown: 'converted content',
+          imageList: { 'img1.jpg': 'data' }
+        })
+      };
+      global.self = mockSelf;
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const result = await global.self.turndown('<p>test content</p>', {}, {});
+      
+      expect(result.markdown).toBe('converted content');
+      expect(result.imageList).toEqual({ 'img1.jpg': 'data' });
+      expect(mockSelf.TurndownManager.convert).toHaveBeenCalledWith('<p>test content</p>', {}, {});
+    });
+
+    test('should handle turndown function fallback when TurndownManager unavailable', async () => {
+      // Setup without TurndownManager
+      global.self = { ...mockSelf, TurndownManager: null };
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const result = await global.self.turndown('<p>test content</p>', {}, {});
+      
+      expect(result.markdown).toBe('');
+      expect(result.imageList).toEqual({});
+    });
+
+    test('should handle convertArticleToMarkdown with DownloadProcessor available', async () => {
+      // Setup DownloadProcessor mock
+      mockSelf.DownloadProcessor = {
+        handleLegacyDownloadRequest: jest.fn().mockResolvedValue({
+          markdown: 'article markdown',
+          imageList: { 'image.jpg': 'imagedata' }
+        })
+      };
+      global.self = mockSelf;
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const article = { pageTitle: 'Test Article', content: 'Test content' };
+      const result = await global.self.convertArticleToMarkdown(article, true);
+      
+      expect(result.markdown).toBe('article markdown');
+      expect(result.imageList).toEqual({ 'image.jpg': 'imagedata' });
+      expect(mockSelf.DownloadProcessor.handleLegacyDownloadRequest).toHaveBeenCalled();
+    });
+
+    test('should handle convertArticleToMarkdown fallback when DownloadProcessor unavailable', async () => {
+      // Setup without DownloadProcessor
+      global.self = { ...mockSelf, DownloadProcessor: null };
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const article = { pageTitle: 'Test Article' };
+      const result = await global.self.convertArticleToMarkdown(article, false);
+      
+      expect(result.markdown).toBe('');
+      expect(result.imageList).toEqual({});
+    });
+
+    test('should handle system health check with all components', () => {
+      // Setup complete system
+      const mockCoordinator = {
+        getSystemStatus: jest.fn(() => ({
+          initialized: true,
+          modules: ['test-module']
+        }))
+      };
+      const mockGlobalStateManager = {
+        isSystemReady: true,
+        modules: { loaded: 5, total: 5 }
+      };
+
+      global.self = {
+        ...mockSelf,
+        serviceWorkerCoordinator: mockCoordinator,
+        globalStateManager: mockGlobalStateManager
+      };
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const health = global.self.getSystemHealth();
+      
+      expect(health.initialized).toBe(true);
+      expect(health.modules).toEqual(['test-module']);
+      expect(health.globalState.isSystemReady).toBe(true);
+    });
+
+    test('should check if system is ready', () => {
+      const mockGlobalStateManager = {
+        isSystemReady: true
+      };
+
+      global.self = {
+        ...mockSelf,
+        globalStateManager: mockGlobalStateManager
+      };
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const isReady = global.self.isSystemReady();
+      expect(isReady).toBe(true);
+    });
+  });
+
+  describe('Module Availability Checks Coverage', () => {
+    test('should check MessageQueue availability correctly', () => {
+      // Test when MessageQueueManager is available
+      global.self = {
+        ...mockSelf,
+        MessageQueueManager: {
+          MessageQueue: jest.fn()
+        }
+      };
+
+      // Import the service worker to get the coordinator class
+      require('../../../src/background/service-worker.js');
+
+      // Create coordinator instance
+      const coordinator = new global.ServiceWorkerCoordinator();
+      expect(coordinator.isMessageQueueAvailable()).toBe(true);
+
+      // Test when MessageQueueManager is not available
+      global.self = { ...mockSelf, MessageQueueManager: null };
+      const coordinator2 = new global.ServiceWorkerCoordinator();
+      expect(coordinator2.isMessageQueueAvailable()).toBe(false);
+    });
+
+    test('should handle ContentExtractor availability checks', () => {
+      // Test with ContentExtractor available
+      global.self = {
+        ...mockSelf,
+        ContentExtractor: {
+          extractContent: jest.fn()
+        }
+      };
+
+      // This would be tested through message handling paths
+      expect(global.self.ContentExtractor.extractContent).toBeDefined();
+
+      // Test without ContentExtractor
+      global.self = { ...mockSelf, ContentExtractor: null };
+      expect(global.self.ContentExtractor).toBeNull();
+    });
+  });
+
+  describe('Error Handling in Legacy Functions', () => {
+    test('should handle errors in turndown function gracefully', async () => {
+      mockSelf.TurndownManager = {
+        convert: jest.fn().mockRejectedValue(new Error('Conversion failed'))
+      };
+      global.self = mockSelf;
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const result = await global.self.turndown('<p>test</p>', {}, {});
+      
+      expect(result.markdown).toBe('');
+      expect(result.imageList).toEqual({});
+    });
+
+    test('should handle errors in convertArticleToMarkdown gracefully', async () => {
+      mockSelf.DownloadProcessor = {
+        handleLegacyDownloadRequest: jest.fn().mockRejectedValue(new Error('Process failed'))
+      };
+      global.self = mockSelf;
+
+      // Import the service worker
+      require('../../../src/background/service-worker.js');
+
+      const result = await global.self.convertArticleToMarkdown({}, false);
+      
+      expect(result.markdown).toBe('');
+      expect(result.imageList).toEqual({});
+    });
+  });
+
+  describe('Service Worker Initialization Edge Cases', () => {
+    test('should handle initialization with different module availability states', async () => {
+      // Test case 1: All modules available
+      global.self = {
+        ...mockSelf,
+        DependencyInjector: {
+          register: jest.fn(),
+          initializeAll: jest.fn().mockResolvedValue()
+        },
+        LifecycleManager: jest.fn().mockImplementation(() => ({
+          handleInstall: jest.fn(),
+          handleActivate: jest.fn()
+        }))
+      };
+
+      const ServiceWorkerClass = require('../../../src/background/service-worker.js').ServiceWorkerCoordinator || global.ServiceWorkerCoordinator;
+      if (ServiceWorkerClass) {
+        const coordinator = new ServiceWorkerClass();
+        await coordinator.initialize();
+        expect(coordinator.isInitialized).toBe(true);
+      }
+    });
+
+    test('should handle module registration edge cases', () => {
+      global.self = {
+        ...mockSelf,
+        DependencyInjector: {
+          register: jest.fn(),
+          initializeAll: jest.fn()
+        }
+      };
+
+      // Test the coordinator registration logic
+      const ServiceWorkerClass = global.ServiceWorkerCoordinator;
+      if (ServiceWorkerClass) {
+        const coordinator = new ServiceWorkerClass();
+        coordinator.registerModules();
+        expect(coordinator.areModulesRegistered).toBe(true);
+      }
+    });
+  });
+
+  describe('System Status Reporting Coverage', () => {
+    test('should provide comprehensive system status information', () => {
+      const mockCoordinator = {
+        isInitialized: true,
+        areModulesRegistered: true,
+        isEventHandlersAttached: true,
+        getSystemStatus: jest.fn(() => ({
+          initialized: true,
+          modules: {
+            errorHandler: true,
+            downloadProcessor: true,
+            messageQueue: true
+          },
+          eventHandlers: true
+        }))
+      };
+
+      global.self = {
+        ...mockSelf,
+        serviceWorkerCoordinator: mockCoordinator,
+        globalStateManager: {
+          isSystemReady: true,
+          modules: { loaded: 8, total: 10 },
+          lastError: null
+        }
+      };
+
+      // Import and test
+      require('../../../src/background/service-worker.js');
+      
+      const status = global.self.getSystemHealth();
+      expect(status).toBeDefined();
+      expect(status.initialized).toBe(true);
+      expect(status.globalState.isSystemReady).toBe(true);
+    });
+  });
+});

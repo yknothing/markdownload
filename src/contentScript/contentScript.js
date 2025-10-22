@@ -118,7 +118,21 @@ async function extractContentForPopup() {
         // Step 3: Extract content using Readability in page context
         console.log('📋 Step 3: Extracting content with Readability...');
 
-        const readability = new window.Readability(document, {
+        // Clone the document to avoid modifying the live page
+        console.log('🔄 Cloning document to prevent live DOM modification...');
+        const documentClone = document.cloneNode(true);
+
+        // Remove all script, style, and noscript tags from the clone
+        // This prevents JavaScript code from being extracted as content
+        console.log('🧹 Removing script/style/noscript tags from document clone...');
+        const scriptsToRemove = documentClone.querySelectorAll('script, style, noscript');
+        console.log(`🗑️ Removing ${scriptsToRemove.length} script/style/noscript elements...`);
+        scriptsToRemove.forEach(element => {
+            element.parentNode?.removeChild(element);
+        });
+
+        console.log('✅ Document clone cleaned, creating Readability instance...');
+        const readability = new window.Readability(documentClone, {
             debug: false,
             maxElemsToParse: 0,
             nbTopCandidates: 5,
@@ -239,8 +253,11 @@ function getHTMLOfDocument() {
         baseEl.setAttribute('href', window.location.href);
     }
 
-    // remove truly hidden elements while preserving content
-    cleanHiddenElements(document.body);
+    // IMPORTANT: Do not mutate the live DOM structure here.
+    // Hidden-element pruning in page context caused loss of visible content on some sites
+    // (e.g., wrappers detected as hidden while containing meaningful children).
+    // We rely on the service worker's sanitization instead.
+    // cleanHiddenElements(document.body);
 
     // get the content of the page as a string
     return document.documentElement.outerHTML;

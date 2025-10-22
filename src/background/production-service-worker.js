@@ -1,7 +1,14 @@
 /**
  * MarkDownload Extension - Production Service Worker
- * Robust implementation with proper error handling and message routing
+ *
+ * This is the ONLY service worker used at runtime.
+ * It is referenced by manifest.json and ships with the extension.
+ *
+ * For any end-user runtime changes, update this file.
+ * Do not change src/background/service-worker.js for production behavior.
  */
+// Diagnostic flag (harmless for tests). Do not rely on this at runtime.
+self.__MD_SW_ROLE = 'production';
 
 // Import browser polyfill and required libraries
 importScripts('../browser-polyfill.min.js');
@@ -259,17 +266,72 @@ class ServiceWorkerState {
         
         try {
             console.log('🔍 Extracting article from HTML content...');
+            // First try DOMParser + Readability when available
+            try {
+                if (typeof DOMParser !== 'undefined' && typeof Readability !== 'undefined') {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(htmlContent, 'text/html');
+                    if (doc && doc.documentElement) {
+                        // Clean noisy nodes that are never part of content
+                        doc.querySelectorAll('script, style, noscript').forEach(n => n.remove());
+
+                        const readability = new Readability(doc);
+                        const art = readability.parse();
+                        if (art && art.content && art.content.trim().length > 0) {
+                            const a = {
+                                title: art.title || doc.title || 'Untitled',
+                                content: art.content,
+                                textContent: (art.textContent || '').trim(),
+                                excerpt: art.excerpt || '',
+                                byline: art.byline || '',
+                                dir: art.dir || '',
+                                siteName: art.siteName || '',
+                                lang: doc.documentElement.getAttribute('lang') || '',
+                                baseURI: baseURI || doc.baseURI
+                            };
+                            console.log(`✅ Readability extraction succeeded: ${a.title}`);
+                            return a;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('⚠️ Readability extraction failed, falling back:', e?.message || e);
+            }
             
-            // Use simplified article extraction without DOMParser
+            // Fallback: simplified regex extraction
             // Extract title from HTML
             const titleMatch = htmlContent.match(/<title[^>]*>(.*?)<\/title>/i);
             const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
             
             // Extract body content if available
             const bodyMatch = htmlContent.match(/<body[^>]*>(.*)<\/body>/is);
-            const bodyContent = bodyMatch ? bodyMatch[1] : htmlContent;
+            let bodyContent = bodyMatch ? bodyMatch[1] : htmlContent;
+
+            // Prefer main article containers if present
+            // Prefer the largest <article> or <main> block if multiple exist
+            const allArticles = Array.from(bodyContent.matchAll(/<article[^>]*>([\s\S]*?)<\/article>/gi)).map(m => m[1]);
+            const allMains = Array.from(bodyContent.matchAll(/<main[^>]*>([\s\S]*?)<\/main>/gi)).map(m => m[1]);
+            if (allArticles.length > 0) {
+                bodyContent = allArticles.sort((a,b)=>b.length-a.length)[0];
+            } else if (allMains.length > 0) {
+                bodyContent = allMains.sort((a,b)=>b.length-a.length)[0];
+            }
+
+            // Remove executable or non-content blocks entirely before any conversion
+            // This prevents inline JavaScript/CSS from leaking into the markdown output
+            bodyContent = bodyContent
+                // Remove script blocks (including inline MathJax configs)
+                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                // Remove style blocks
+                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                // Remove noscript fallbacks
+                .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '')
+                // Remove common non-content blocks
+                .replace(/<(nav|header|footer|aside)[^>]*>[\s\S]*?<\/\1>/gi, '')
+                // Remove obvious navigation/menus/sidebars by class/id patterns (conservative; exclude 'toc')
+                .replace(/<(div|section)[^>]*(class|id)\s*=\s*['"][^"']*(nav|menu|header|footer|sidebar|breadcrumbs?|share|social)[^"']*['"][^>]*>[\s\S]*?<\/\1>/gi, '');
             
-            // Extract text content by removing HTML tags
+            // Extract text content by removing remaining HTML tags (after script/style cleanup)
             const textContent = bodyContent.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
             
             // Extract meta description for excerpt
@@ -333,6 +395,12 @@ class ServiceWorkerState {
         
         try {
             let content = article.content || '';
+
+            // Safety: strip non-content blocks again in case content did not go through getArticleFromDom
+            content = content
+                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, '');
             const imageList = {};
             
             // First, clean up complex JavaScript/React artifacts
@@ -341,22 +409,22 @@ class ServiceWorkerState {
             // Enhanced HTML to Markdown conversion
             // Headers (handle nested content better)
             content = content.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, (match, inner) => {
-                return '# ' + this.stripHtml(inner) + '\n\n';
+                return '# ' + this.cleanHeadingText(this.stripHtml(inner)) + '\n\n';
             });
             content = content.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (match, inner) => {
-                return '## ' + this.stripHtml(inner) + '\n\n';
+                return '## ' + this.cleanHeadingText(this.stripHtml(inner)) + '\n\n';
             });
             content = content.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, (match, inner) => {
-                return '### ' + this.stripHtml(inner) + '\n\n';
+                return '### ' + this.cleanHeadingText(this.stripHtml(inner)) + '\n\n';
             });
             content = content.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, (match, inner) => {
-                return '#### ' + this.stripHtml(inner) + '\n\n';
+                return '#### ' + this.cleanHeadingText(this.stripHtml(inner)) + '\n\n';
             });
             content = content.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, (match, inner) => {
-                return '##### ' + this.stripHtml(inner) + '\n\n';
+                return '##### ' + this.cleanHeadingText(this.stripHtml(inner)) + '\n\n';
             });
             content = content.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, (match, inner) => {
-                return '###### ' + this.stripHtml(inner) + '\n\n';
+                return '###### ' + this.cleanHeadingText(this.stripHtml(inner)) + '\n\n';
             });
             
             // Bold and italic (handle nested content)
@@ -504,11 +572,27 @@ class ServiceWorkerState {
             
             // Decode HTML entities
             content = this.decodeHtmlEntities(content);
-            
-            // Clean up extra whitespace
+
+            // Normalize inline ToC rows like: "Table of Contents - [A](#a) - [B](#b) - [C](#c)"
+            content = this.convertInlineLinkRunsToList(content);
+
+            // Clean up extra whitespace (collapse 3+ newlines) and trim edges
+            content = content.replace(/\r\n?/g, '\n');
             content = content.replace(/\n{3,}/g, '\n\n');
             content = content.replace(/^\s+|\s+$/g, '');
-            
+
+            // Ensure block-level separation for Markdown readability
+            content = this.ensureMarkdownBlockSeparation(content);
+
+            // Final normalization: collapse any accidental 3+ newlines created above
+            content = content.replace(/\n{3,}/g, '\n\n');
+
+            // Remove stray anchor glyph-only lines (common from blog anchor icons)
+            content = content.replace(/^\s*([#¶❡§•]|\u00B6|\u00A7)\s*$/gmu, '');
+
+            // Ensure trailing newline for POSIX-friendly editors
+            if (!content.endsWith('\n')) content += '\n';
+
             const markdown = content;
             
             console.log(`✅ Enhanced fallback conversion completed: ${markdown.length} chars`);
@@ -530,19 +614,71 @@ class ServiceWorkerState {
     }
     
     cleanupJavaScriptArtifacts(content) {
-        // Remove JavaScript/React artifacts that appear in the content
-        content = content.replace(/self\.__next_f[\s\S]*?\]\)/g, '');
-        content = content.replace(/\$\w+/g, ''); // Remove React variable references
-        content = content.replace(/\["[\s\S]*?\]/g, ''); // Remove array structures
-        content = content.replace(/\{[^{}]*\}/g, ''); // Remove simple object structures
-        content = content.replace(/,\s*,/g, ','); // Clean up double commas
-        
+        // Remove specific JS artifacts injected by frameworks, conservatively
+        // Do NOT remove generic braces/arrays/tokens to avoid dropping valid content (math, code, text)
+        try {
+            content = content.replace(/self\.__next_f[\s\S]*?\]\)/g, '');
+        } catch (_) {}
         return content;
+    }
+
+    // Convert inline link runs into a bulleted list (esp. ToC rows)
+    convertInlineLinkRunsToList(text) {
+        if (!text || typeof text !== 'string') return text;
+        const lines = text.split('\n');
+        const out = lines.map((line) => {
+            const links = Array.from(line.matchAll(/\[[^\]]+\]\([^)]+\)/g)).map(m => m[0]);
+            if (links.length === 0) return line;
+
+            const hasToc = /table of contents/i.test(line);
+            const sepCount = (line.match(/\s(?:-\s|\|\s|•\s)/g) || []).length;
+
+            // Heuristic: if 3+ links in a row, or labeled ToC, render as a bulleted list
+            if (links.length >= 3 || (hasToc && links.length >= 2) || (hasToc && sepCount >= 1)) {
+                let result = hasToc ? '## Table of Contents\n' : '';
+                result += links.map(l => `- ${l}`).join('\n');
+                return result;
+            }
+
+            return line;
+        });
+        return out.join('\n');
+    }
+
+    // Ensure Markdown block elements are separated by blank lines
+    ensureMarkdownBlockSeparation(text) {
+        if (!text) return '';
+        let out = text;
+
+        // Headings: ensure blank line before any heading not at start
+        out = out.replace(/([^\n])\s*(#{1,6}\s[^\n]+)/g, '$1\n\n$2');
+        // Ensure separation between adjacent headings (e.g., "# A# B" -> "# A\n\n# B")
+        out = out.replace(/(#{1,6}\s[^\n]+)(#{1,6}\s)/g, '$1\n\n$2');
+
+        // Fenced code blocks: ensure blank line before ```
+        out = out.replace(/([^\n])\n?(```)/g, '$1\n\n$2');
+
+        // Unordered list items: ensure blank line before first list item of a block
+        out = out.replace(/([^\n])\n?(-\s[^\n]+)/g, '$1\n\n$2');
+
+        // Ordered list items: ensure blank line before first numbered item
+        out = out.replace(/([^\n])\n?(\d+\.\s[^\n]+)/g, '$1\n\n$2');
+
+        // Blockquotes: ensure blank line before '>' blocks
+        out = out.replace(/([^\n])\n?(>\s[^\n]+)/g, '$1\n\n$2');
+
+        return out;
     }
     
     stripHtml(text) {
         if (!text) return '';
         return text.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    }
+    
+    cleanHeadingText(text) {
+        if (!text) return '';
+        // Remove trailing anchor glyphs commonly used in blog headers
+        return String(text).replace(/\s*([#¶❡§•]|\u00B6|\u00A7)+\s*$/u, '').trim();
     }
     
     decodeHtmlEntities(text) {
@@ -555,7 +691,13 @@ class ServiceWorkerState {
             '&#x2F;': '/',
             '&#x60;': '`',
             '&#x3D;': '=',
-            '&nbsp;': ' '
+            '&nbsp;': ' ',
+            '&rsquo;': "'",
+            '&lsquo;': "'",
+            '&rdquo;': '"',
+            '&ldquo;': '"',
+            '&mdash;': '—',
+            '&ndash;': '–'
         };
         
         return text.replace(/&[#\w]+;/g, (entity) => {

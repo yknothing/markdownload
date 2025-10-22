@@ -1,3 +1,5 @@
+Version: TA-1.0.0 | Status: Active | Updated: 2025-09-06
+
 **测试架构现状评估与问题清单（客观版）**
 
 更新时间：2025-09-05
@@ -23,18 +25,18 @@
 - 来源：
   - 覆盖率汇总：`coverage/coverage-summary.json:1`
   - 测试摘要：`coverage/test-summary.md:1`
-- 总体覆盖率（当前基线）：
-  - 行覆盖率：9.07%
-  - 语句覆盖率：8.10%
-  - 分支覆盖率：5.47%
-  - 函数覆盖率：9.30%
+- 总体覆盖率（当前基线，以覆盖产物为准）：
+  - 行覆盖率：22.81%
+  - 语句覆盖率：22.64%
+  - 分支覆盖率：19.41%
+  - 函数覆盖率：22.51%
 - 关键模块覆盖率摘录：
-  - `src/background/background.js:1` 行37.65% / 函数39.39% / 语句37.75% / 分支39.62%
-  - `src/background/service-worker.js:1` 行21.61% / 函数15.78% / 语句21.59% / 分支5.66%
+  - `src/background/background.js:1` 行38.36% / 函数39.39% / 语句39.09% / 分支44.2%
+  - `src/background/service-worker.js:1` 行23.51% / 函数18.42% / 语句23.47% / 分支7.16%
   - `src/background/Readability.js:1` 行/函数/语句/分支：0%
   - `src/background/apache-mime-types.js:1` 行/函数/语句/分支：100%
-- 测试通过率（最近一次产物）：
-  - 总数：1847 / 通过：1237 / 失败：507 / 挂起：103（通过率 66.97%）
+- 测试通过率（最近一次产物示例）：
+  - 总数：1269 / 通过：818 / 失败：348 / 挂起：103（通过率 64.46%）
   - E2E 通过率：0%（需后续专项治理）
 - 再生成指引：
   - 快速：`npm run test:ci`（CI 同步产出 `coverage/` 目录）
@@ -82,3 +84,8 @@
 - 抽取统一 Jest 基座配置，`tests/run-tests.js` 仅拼装模式化参数，避免重复。
 - 迁移 `testResultsProcessor` 到自定义 Reporter；默认关闭 `forceExit` 与激进 jsdom 选项。
 - 具体实施步骤见 `docs/TDD/test_refactor_strategy.md`。
+
+**修订记录（数据更正）**
+- 修订前：行 9.07 / 语句 8.10 / 分支 5.47 / 函数 9.30（历史基线）
+- 2025-09-07修订：行 22.81 / 语句 22.64 / 分支 19.41 / 函数 22.51（来自 coverage/coverage-summary.json，生成于 Sep 6 21:40）
+- 说明：基线数据取自当前最新覆盖产物，用于阶段入口 PHASE_CURRENT.md 的目标设定与验收对照，以产物为准消除口径差异

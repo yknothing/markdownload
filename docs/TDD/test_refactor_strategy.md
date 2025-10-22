@@ -1,6 +1,8 @@
+Version: Phase-1.0.0 | Status: Active | Updated: 2025-09-07
+
 **测试架构整改策略（Top‑Down 方案与路线图）**
 
-更新时间：2025-09-05
+更新时间：2025-09-07
 
 - 定位：面向实施的顶层方案与路线图，给出阶段目标、任务清单与验收标准。
 - 关联：
@@ -35,6 +37,7 @@
   - `tests/unit/background.test.js`：删除 `backgroundFunctions = { .. }` 自定义实现（见 `23`、`24`、`34`、`55`），直接 `require('../../src/background/background.js')` 获取真实函数；必要时仅对浏览器 API 进行 spy/mock（复用 `tests/mocks/browserMocks.js`）。
   - `tests/utils/testHelpers.js`：废弃 `mockGenerateValidFileName(..)`（`363`）与 `mockTextReplace(..)`（`391`），如需工具函数，封装为“断言/期望生成”，不应替代业务实现。
   - 已有“真实执行”参考：`tests/unit/real-src-functions.test.js:1` 通过 `vm` 加载真实 `background.js`，可作为迁移范式。
+  - 替代环境检测：禁止 `typeof jest` 分支，统一使用可注入的 `EnvironmentConfig` / `DateProvider`（见 `tests/utils/testHelpers.js:785` 起）
 
 - 迁移检查表（逐文件）
   - `tests/unit/background.test.js:11` 起：移除 `backgroundFunctions` 伪实现块，改为从 `src/background/background.js:1` 解构导入 `turndown`、`textReplace`、`generateValidFileName`、`convertArticleToMarkdown` 等；配合 `tests/mocks/hybridMocks.js:1` 仅 Mock 浏览器 API。

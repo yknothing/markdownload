@@ -206,28 +206,18 @@ jobs:
         run: |
           # Source math operations
           source /tmp/math_ops.sh
-          if [ -f "coverage/coverage-final.json" ]; then
+
+          COVERAGE_FILE="coverage/coverage-summary.json"
+          if [ -f "$COVERAGE_FILE" ]; then
             COVERAGE_PERCENTAGE=$(node -e "
-              const coverage = require('./coverage/coverage-final.json');
-              const files = Object.values(coverage);
-              const totals = files.reduce((acc, file) => ({
-                lines: acc.lines + file.l.found,
-                linesCovered: acc.linesCovered + file.l.hit,
-                statements: acc.statements + file.s.found,
-                statementsCovered: acc.statementsCovered + Object.values(file.s).reduce((sum, count) => sum + (count > 0 ? 1 : 0), 0),
-                functions: acc.functions + file.f.found,
-                functionsCovered: acc.functionsCovered + Object.values(file.f).reduce((sum, count) => sum + (count > 0 ? 1 : 0), 0),
-                branches: acc.branches + file.b.found,
-                branchesCovered: acc.branchesCovered + Object.values(file.b).reduce((sum, branch) => sum + branch.reduce((branchSum, hit) => branchSum + (hit > 0 ? 1 : 0), 0), 0)
-              }), { lines: 0, linesCovered: 0, statements: 0, statementsCovered: 0, functions: 0, functionsCovered: 0, branches: 0, branchesCovered: 0 });
-              
-              const linesCoverage = totals.lines > 0 ? (totals.linesCovered / totals.lines * 100) : 0;
-              console.log(Math.round(linesCoverage * 100) / 100);
+              const summary = require('./${COVERAGE_FILE}');
+              const pct = summary?.total?.lines?.pct ?? 0;
+              console.log(Number.isFinite(pct) ? pct.toFixed(2) : '0');
             ")
-            
+
             echo "percentage=$COVERAGE_PERCENTAGE" >> $GITHUB_OUTPUT
             echo "Coverage: $COVERAGE_PERCENTAGE%"
-            
+
             # Check if coverage meets threshold using portable math operations
             if compare_float "$COVERAGE_PERCENTAGE" ">=" "$QUALITY_THRESHOLD_COVERAGE"; then
               echo "✅ Coverage $COVERAGE_PERCENTAGE% meets threshold $QUALITY_THRESHOLD_COVERAGE%"
@@ -237,7 +227,7 @@ jobs:
             fi
           else
             echo "percentage=0" >> $GITHUB_OUTPUT
-            echo "❌ Coverage file not found"
+            echo "❌ Coverage summary not found"
             echo "COVERAGE_FAILED=true" >> $GITHUB_ENV
           fi
 

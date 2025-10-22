@@ -333,3 +333,208 @@ describe('Template Variable Replacement Tests', () => {
     });
   });
 });
+// Coverage Sprint: Additional textReplace tests targeting uncovered branches
+describe('textReplace Coverage Sprint - Advanced Edge Cases', () => {
+  describe('Date Processing Edge Cases', () => {
+    test('should handle invalid date formats gracefully', () => {
+      const template = '{date:INVALID_FORMAT}';
+      const result = textReplace(template, {});
+      expect(typeof result).toBe('string');
+      expect(result.length).toBeGreaterThan(0);
+    });
+
+    test('should handle empty date format', () => {
+      const template = '{date:}';
+      const result = textReplace(template, {});
+      expect(typeof result).toBe('string');
+    });
+
+    test('should handle multiple date placeholders with different formats', () => {
+      const template = '{date:YYYY} - {date:MM} - {date:DD}';
+      const result = textReplace(template, {});
+      expect(result).toMatch(/^\d{4} - \d{2} - \d{2}$/);
+    });
+  });
+
+  describe('Keywords Processing Advanced', () => {
+    test('should handle keywords with escaped separator characters', () => {
+      const article = { keywords: ['a', 'b', 'c'] };
+      
+      // Test quoted separators
+      expect(textReplace('{keywords:" | "}', article)).toBe('a | b | c');
+      expect(textReplace('{keywords:"; "}', article)).toBe('a; b; c');
+    });
+
+    test('should handle keywords with no separator specified', () => {
+      const article = { keywords: ['tag1', 'tag2'] };
+      expect(textReplace('{keywords}', article)).toBe('tag1, tag2');
+    });
+
+    test('should handle non-array keywords property', () => {
+      const article = { keywords: 'not-an-array' };
+      expect(textReplace('{keywords}', article)).toBe('');
+    });
+
+    test('should handle missing keywords property', () => {
+      const article = { pageTitle: 'Test' };
+      expect(textReplace('{keywords}', article)).toBe('');
+    });
+
+    test('should handle empty keywords array', () => {
+      const article = { keywords: [] };
+      expect(textReplace('{keywords}', article)).toBe('');
+    });
+  });
+
+  describe('Fallback Logic Coverage', () => {
+    test('should trigger fallback for unmatched placeholders', () => {
+      const article = { pageTitle: 'Fallback Title' };
+      expect(textReplace('{nonexistent}', article)).toBe('Fallback Title');
+    });
+
+    test('should trigger fallback for empty result', () => {
+      expect(textReplace('', { pageTitle: 'Fallback Title' })).toBe('Fallback Title');
+    });
+
+    test('should trigger fallback for symbols-only result', () => {
+      expect(textReplace('!@#$%', { pageTitle: 'Clean Title' })).toBe('Clean Title');
+    });
+
+    test('should use title when pageTitle unavailable', () => {
+      expect(textReplace('', { title: 'Title Fallback' })).toBe('Title Fallback');
+    });
+
+    test('should use ultimate fallback when no titles available', () => {
+      expect(textReplace('', {})).toBe('download');
+    });
+
+    test('should not trigger fallback for unmatched but alphanumeric content', () => {
+      expect(textReplace('{unknown}', {})).toBe('{unknown}');
+    });
+  });
+
+  describe('Escape and Unescape Logic', () => {
+    test('should handle escaped placeholders correctly', () => {
+      const article = { pageTitle: 'Test Page' };
+      expect(textReplace('\\{pageTitle\\}', article)).toBe('{pageTitle}');
+    });
+
+    test('should handle mixed escaped and unescaped placeholders', () => {
+      const article = { pageTitle: 'Page', author: 'Author' };
+      const template = '\\{pageTitle\\} by {author}';
+      expect(textReplace(template, article)).toBe('{pageTitle} by Author');
+    });
+
+    test('should handle multiple escaped placeholders', () => {
+      const template = '\\{title\\} \\{author\\} \\{date\\}';
+      expect(textReplace(template, {})).toBe('{title} {author} {date}');
+    });
+  });
+
+  describe('Transform and Sanitization Coverage', () => {
+    test('should apply disallowed characters filtering', () => {
+      const article = { pageTitle: 'File/Name:With*Special?Chars' };
+      const result = textReplace('{pageTitle}', article, '/:<>*?');
+      expect(result).not.toContain('/');
+      expect(result).not.toContain(':');
+      expect(result).not.toContain('*');
+      expect(result).not.toContain('?');
+    });
+
+    test('should skip content property during iteration', () => {
+      const article = { 
+        pageTitle: 'Test',
+        content: 'Should be ignored',
+        author: 'Author'
+      };
+      expect(textReplace('{content}', article)).toBe('{content}');
+      expect(textReplace('{author}', article)).toBe('Author');
+    });
+
+    test('should handle properties without hasOwnProperty', () => {
+      const article = Object.create({ inherited: 'value' });
+      article.pageTitle = 'Own Property';
+      expect(textReplace('{pageTitle}', article)).toBe('Own Property');
+      expect(textReplace('{inherited}', article)).toBe('{inherited}'); // Should not process inherited
+    });
+  });
+
+  describe('Domain Processing Coverage', () => {
+    test('should handle invalid URLs gracefully', () => {
+      const article = { baseURI: 'not-a-valid-url' };
+      expect(textReplace('{domain}', article)).toBe('');
+    });
+
+    test('should handle complex URL structures', () => {
+      const article = { baseURI: 'https://api.sub.example.com:8080/path?query=value' };
+      expect(textReplace('{domain}', article)).toBe('api.sub.example.com');
+    });
+
+    test('should handle localhost URLs', () => {
+      const article = { baseURI: 'http://localhost:3000/app' };
+      expect(textReplace('{domain}', article)).toBe('localhost');
+    });
+
+    test('should handle IP addresses', () => {
+      const article = { baseURI: 'http://192.168.1.100/path' };
+      expect(textReplace('{domain}', article)).toBe('192.168.1.100');
+    });
+
+    test('should skip domain processing when not needed', () => {
+      const template = '{pageTitle}'; // No {domain}
+      const article = { pageTitle: 'Test', baseURI: 'https://example.com' };
+      expect(textReplace(template, article)).toBe('Test');
+    });
+  });
+
+  describe('Complex Integration Scenarios', () => {
+    test('should handle templates with all placeholder types', () => {
+      const article = {
+        pageTitle: 'My Article',
+        author: 'John Doe',
+        keywords: ['js', 'testing'],
+        baseURI: 'https://example.com/article'
+      };
+      
+      const template = '{pageTitle} by {author} from {domain} - {keywords:, } on {date:YYYY-MM-DD}';
+      const result = textReplace(template, article);
+      
+      expect(result).toContain('My Article');
+      expect(result).toContain('John Doe');
+      expect(result).toContain('example.com');
+      expect(result).toContain('js, testing');
+      expect(result).toMatch(/\d{4}-\d{2}-\d{2}/);
+    });
+
+    test('should handle very long templates efficiently', () => {
+      const article = { pageTitle: 'T' };
+      const longTemplate = '{pageTitle}'.repeat(100);
+      const result = textReplace(longTemplate, article);
+      expect(result).toBe('T'.repeat(100));
+    });
+
+    test('should handle templates with no placeholders', () => {
+      expect(textReplace('Plain text', { pageTitle: 'Ignored' })).toBe('Plain text');
+    });
+  });
+
+  describe('Boundary and Error Conditions', () => {
+    test('should handle null/undefined template inputs', () => {
+      expect(textReplace(null, { pageTitle: 'Title' })).toBe('Title');
+      expect(textReplace(undefined, { pageTitle: 'Title' })).toBe('Title');
+    });
+
+    test('should handle non-string template inputs', () => {
+      expect(textReplace(123, { pageTitle: 'Title' })).toBe('Title');
+      expect(textReplace({}, { pageTitle: 'Title' })).toBe('Title');
+      expect(textReplace([], { pageTitle: 'Title' })).toBe('Title');
+    });
+
+    test('should handle malformed JSON in separator parsing', () => {
+      const article = { keywords: ['a', 'b'] };
+      // This should not crash even with malformed separator
+      const result = textReplace('{keywords:invalid"json}', article);
+      expect(typeof result).toBe('string');
+    });
+  });
+});

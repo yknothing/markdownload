@@ -1,6 +1,8 @@
 /**
  * Enhanced MarkDownload Popup Script
- * Robust implementation with improved error handling and messaging
+ *
+ * NOTE: Not referenced by manifest.json. Kept for experiments/dev.
+ * The runtime popup is optimized-popup.html/js.
  */
 
 console.log('🚀 MarkDownload Enhanced Popup: Loading...');

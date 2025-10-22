@@ -263,8 +263,25 @@
 
     function convertToFencedCodeBlock(node, options) {
       node.innerHTML = node.innerHTML.replace(/<br-keep><\/br-keep>/g, '<br>');
-      const langMatch = node.className?.match(/language-(.+)/) || node.className?.match(/lang-(.+)/);
-      const language = langMatch?.length > 0 ? langMatch[1] : '';
+
+      // Extract language from className (standard format) or id (fallback format)
+      let language = '';
+
+      // Get className as string (handle both string and object representations)
+      const classNameStr = node.getAttribute('class') || node.className || '';
+
+      // Try className first (standard: class="language-javascript" or class="lang-javascript")
+      const classLangMatch = classNameStr.match(/language-([^\s]+)/) || classNameStr.match(/lang-([^\s]+)/);
+      if (classLangMatch?.length > 0) {
+        language = classLangMatch[1];
+      } else {
+        // Fallback to id attribute (format: id="code-lang-javascript")
+        const idStr = node.getAttribute('id') || node.id || '';
+        const idLangMatch = idStr.match(/code-lang-(.+)/);
+        if (idLangMatch?.length > 0) {
+          language = idLangMatch[1];
+        }
+      }
 
       const code = node.innerText || node.textContent || "";
       const fenceChar = options.fence.charAt(0);

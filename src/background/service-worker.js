@@ -1,19 +1,23 @@
 /**
- * MarkDownload Extension Service Worker (Manifest V3)
+ * MarkDownload Extension Service Worker (Experimental)
  *
- * This is the main entry point for the MarkDownload browser extension's service worker.
- * It orchestrates all modules and handles the extension's lifecycle events.
+ * IMPORTANT
+ * - Not referenced by manifest.json and NOT shipped in the production build.
+ * - Kept for experimentation, architectural prototyping, and unit-test coverage.
+ * - The production service worker actually used by the extension is:
+ *   src/background/production-service-worker.js
+ *
+ * If you need to modify runtime behavior for end users, change
+ * production-service-worker.js instead of this file.
  *
  * Architecture: Modular design with clear separation of concerns following SOLID principles
  * - LifecycleManager: Handles SW installation/activation lifecycle
  * - MessageQueueManager: Manages inter-module communication and message processing
  * - DownloadProcessor: Handles all download-related business logic
  * - DependencyInjector: Manages module dependencies and initialization order
- *
- * @author MarkDownload Team
- * @version 2.0.0
- * @since 2024
  */
+// Diagnostic flag (harmless for tests). Do not rely on this at runtime.
+self.__MD_SW_ROLE = 'experimental';
 
 // Install unified logger before any logs
 try { importScripts('../shared/logger.js'); } catch (e) {}

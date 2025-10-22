@@ -1,4 +1,10 @@
 
+/**
+ * Legacy Popup Script
+ * NOTE: Not referenced by manifest.json in MV3 builds.
+ * Kept for legacy/dev/testing. Production uses optimized-popup.*
+ */
+
 // Popup initialization with robust browser API handling
 let browserAPIReady = false;
 let browserAPI = null;

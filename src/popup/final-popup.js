@@ -1,6 +1,9 @@
 /**
  * MarkDownload 最终版 Popup Script
  * 简洁的界面，专注于核心功能：下载Markdown文件
+ *
+ * NOTE: Not referenced by manifest.json. Kept for experiments/dev.
+ * The runtime popup is optimized-popup.html/js.
  */
 
 console.log('🚀 MarkDownload Final Popup: 加载中...');
