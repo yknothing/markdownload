@@ -275,6 +275,66 @@ class ServiceWorkerState {
                         // Clean noisy nodes that are never part of content
                         doc.querySelectorAll('script, style, noscript').forEach(n => n.remove());
 
+                        // Math and code preprocessing to improve extraction fidelity
+                        try {
+                            const math = {};
+                            const storeMathInfo = (el, mathInfo) => {
+                                let randomId = URL.createObjectURL(new Blob([]));
+                                randomId = randomId.substring(randomId.length - 36);
+                                el.id = randomId;
+                                math[randomId] = mathInfo;
+                            };
+                            // MathJax v2
+                            doc.body?.querySelectorAll('script[id^=MathJax-Element-]')?.forEach(mathSource => {
+                                const type = mathSource.getAttribute('type') || '';
+                                storeMathInfo(mathSource, {
+                                    tex: mathSource.textContent || '',
+                                    inline: type ? !type.includes('mode=display') : false
+                                });
+                                mathSource.parentNode?.removeChild(mathSource);
+                            });
+                            // MathJax v3 (markdownload-latex)
+                            doc.body?.querySelectorAll('[markdownload-latex]')?.forEach(mjx =>  {
+                                const tex = mjx.getAttribute('markdownload-latex') || '';
+                                const display = mjx.getAttribute('display');
+                                const inline = !(display && display === 'true');
+                                const mathNode = doc.createElement(inline ? 'i' : 'p');
+                                mathNode.textContent = tex;
+                                mjx.parentNode?.insertBefore(mathNode, mjx.nextSibling);
+                                mjx.parentNode?.removeChild(mjx);
+                                storeMathInfo(mathNode, { tex, inline });
+                            });
+                            // KaTeX
+                            doc.body?.querySelectorAll('.katex-mathml')?.forEach(ka => {
+                                const ann = ka.querySelector('annotation');
+                                if (!ann) return;
+                                storeMathInfo(ka, { tex: ann.textContent || '', inline: true });
+                            });
+                            // Language hints for code blocks
+                            doc.body?.querySelectorAll('[class*=highlight-text],[class*=highlight-source]')?.forEach(codeSource => {
+                                const m = (codeSource.getAttribute('class') || '').match(/highlight-(?:text|source)-([a-z0-9]+)/);
+                                const language = m && m[1];
+                                if (language && codeSource.firstChild && codeSource.firstChild.nodeName === 'PRE') {
+                                    (codeSource.firstChild).setAttribute('id', `code-lang-${language}`);
+                                }
+                            });
+                            doc.body?.querySelectorAll('[class*=language-]')?.forEach(codeSource => {
+                                const m = (codeSource.getAttribute('class') || '').match(/language-([a-z0-9]+)/);
+                                const language = m && m[1];
+                                if (language) codeSource.setAttribute('id', `code-lang-${language}`);
+                            });
+                            doc.body?.querySelectorAll('pre br')?.forEach(br => {
+                                br.outerHTML = '<br-keep></br-keep>';
+                            });
+                            doc.body?.querySelectorAll('h1, h2, h3, h4, h5, h6')?.forEach(h => {
+                                h.removeAttribute('class');
+                                h.outerHTML = h.outerHTML; // normalize
+                            });
+                            doc.documentElement?.removeAttribute('class');
+                            // Attach for later use
+                            doc.__md_math = math;
+                        } catch (_) {}
+
                         const readability = new Readability(doc);
                         const art = readability.parse();
                         if (art && art.content && art.content.trim().length > 0) {
@@ -289,6 +349,7 @@ class ServiceWorkerState {
                                 lang: doc.documentElement.getAttribute('lang') || '',
                                 baseURI: baseURI || doc.baseURI
                             };
+                            try { if (doc.__md_math && Object.keys(doc.__md_math).length) a.math = doc.__md_math; } catch (_) {}
                             console.log(`✅ Readability extraction succeeded: ${a.title}`);
                             return a;
                         }
@@ -383,11 +444,135 @@ class ServiceWorkerState {
     
     async convertArticleToMarkdown(article, options) {
         console.log('🔄 Converting article to markdown');
-        
-        // Always use fallback conversion in service worker environment
-        // TurndownService has DOM dependencies that are incompatible with service workers
-        console.log('🔄 Using service worker compatible conversion...');
+        // Prefer Turndown-based conversion for higher fidelity. Fallback on regex converter.
+        try {
+            const primary = this.turndownArticleToMarkdown(article, options);
+            if (primary && typeof primary.markdown === 'string' && primary.markdown.trim().length > 200) {
+                return primary;
+            }
+        } catch (e) {
+            console.warn('⚠️ Turndown conversion failed, using fallback:', e?.message || e);
+        }
         return this.fallbackHtmlToMarkdown(article, options);
+    }
+
+    turndownArticleToMarkdown(article, options = {}) {
+        if (!article || !article.content) return { markdown: '', imageList: {} };
+        const imageList = {};
+
+        // eslint-disable-next-line no-undef
+        const service = new TurndownService(options);
+        // eslint-disable-next-line no-undef
+        service.use(turndownPluginGfm.gfm);
+        service.keep(['iframe', 'sub', 'sup', 'u', 'ins', 'del', 'small', 'big']);
+
+        // Helpers
+        const repeat = (ch, n) => Array(n + 1).join(ch);
+        const convertToFencedCodeBlock = (node, tdopts) => {
+            node.innerHTML = (node.innerHTML || '').replaceAll('<br-keep></br-keep>', '<br>');
+            let language = '';
+            const cls = node.getAttribute('class') || node.className || '';
+            const viaClass = cls.match(/language-([^\s]+)/) || cls.match(/lang-([^\s]+)/);
+            if (viaClass?.length) language = viaClass[1]; else {
+                const idStr = node.getAttribute('id') || node.id || '';
+                const m = idStr.match(/code-lang-(.+)/);
+                if (m?.length) language = m[1];
+            }
+            const code = node.innerText || node.textContent || '';
+            const fenceChar = (tdopts.fence || '```').charAt(0);
+            let fenceSize = 3;
+            const fenceInCodeRegex = new RegExp('^' + fenceChar + '{3,}', 'gm');
+            let match;
+            while ((match = fenceInCodeRegex.exec(code))) {
+                if (match[0].length >= fenceSize) fenceSize = match[0].length + 1;
+            }
+            const fence = repeat(fenceChar, fenceSize);
+            return '\n\n' + fence + (language || '') + '\n' + code.replace(/\n$/, '') + '\n' + fence + '\n\n';
+        };
+
+        // Images
+        service.addRule('images', {
+            filter: (node) => node.nodeName === 'IMG' && node.getAttribute('src'),
+            replacement: (content, node, tdopts) => {
+                const imgStyle = options.imageStyle || 'markdown';
+                if (imgStyle === 'noImage') return '';
+
+                let src = node.getAttribute('src') || '';
+                const alt = node.getAttribute('alt') || '';
+                const title = node.getAttribute('title') || '';
+                src = this.resolveUrl(src, article.baseURI);
+
+                let displayedSrc = src;
+                if (options.downloadImages) {
+                    const fn = this.generateImageFilename(src, options, article.title || '');
+                    let unique = fn, i = 1;
+                    while (Object.values(imageList).includes(unique)) {
+                        const parts = fn.split('.');
+                        if (i === 1) parts.splice(parts.length - 1, 0, i++);
+                        else parts.splice(parts.length - 2, 1, i++);
+                        unique = parts.join('.');
+                    }
+                    imageList[src] = unique;
+                    if (imgStyle !== 'originalSource' && imgStyle !== 'base64') {
+                        if (imgStyle.startsWith('obsidian')) {
+                            displayedSrc = (imgStyle === 'obsidian-nofolder') ? unique.substring(unique.lastIndexOf('/') + 1) : unique;
+                        } else {
+                            displayedSrc = unique.split('/').map(s => encodeURI(s)).join('/');
+                        }
+                    }
+                }
+
+                if ((imgStyle || '').startsWith('obsidian')) {
+                    return `![[${displayedSrc}]]`;
+                } else {
+                    const titlePart = title ? ` "${title}"` : '';
+                    return displayedSrc ? `![${alt}](${displayedSrc}${titlePart})` : '';
+                }
+            }
+        });
+
+        // Links
+        service.addRule('links', {
+            filter: (node) => node.nodeName === 'A' && node.getAttribute('href'),
+            replacement: (content, node) => {
+                const href = this.resolveUrl(node.getAttribute('href'), article.baseURI);
+                if ((options.linkStyle || '') === 'stripLinks') return content;
+                return `[${content}](${href})`;
+            }
+        });
+
+        // Code blocks
+        service.addRule('fencedCodeBlock', {
+            filter: (node, tdopts) => (tdopts.codeBlockStyle === 'fenced' && node.nodeName === 'PRE' && node.firstChild && node.firstChild.nodeName === 'CODE'),
+            replacement: (content, node, tdopts) => convertToFencedCodeBlock(node.firstChild, tdopts)
+        });
+        service.addRule('pre', {
+            filter: (node) => (node.nodeName === 'PRE' && (!node.firstChild || node.firstChild.nodeName !== 'CODE') && !node.querySelector('img')),
+            replacement: (content, node, tdopts) => convertToFencedCodeBlock(node, tdopts)
+        });
+
+        // MathJax
+        if (article.math && typeof article.math === 'object') {
+            service.addRule('mathjax', {
+                filter: (node) => article.math && Object.prototype.hasOwnProperty.call(article.math, node.id),
+                replacement: (content, node) => {
+                    const math = article.math[node.id];
+                    let tex = (math?.tex || '').trim().replaceAll('\u00a0', '');
+                    if (math?.inline) {
+                        tex = tex.replaceAll('\n', ' ');
+                        return `$${tex}$`;
+                    }
+                    return `$$\n${tex}\n$$`;
+                }
+            });
+        }
+
+        let markdown = service.turndown(article.content || '');
+        markdown = markdown
+            .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\ufeff\ufff9-\ufffc]/g, '')
+            .replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+
+        return { markdown, imageList };
     }
     
     fallbackHtmlToMarkdown(article, options) {
