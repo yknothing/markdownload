@@ -335,7 +335,22 @@ class ServiceWorkerState {
                             doc.__md_math = math;
                         } catch (_) {}
 
-                        const readability = new Readability(doc);
+                        const readability = new Readability(doc, {
+                            debug: false,
+                            maxElemsToParse: 0,  // No limit
+                            nbTopCandidates: 5,  // Consider top 5 content candidates
+                            charThreshold: 100,  // Lower threshold for better content detection
+                            classesToPreserve: [
+                                'markdown-body',     // GitHub-style markdown
+                                'markdown-content',  // Common markdown class
+                                'post-content',      // Blog post content
+                                'entry-content',     // WordPress/blog standard
+                                'article-content',   // Article containers
+                                'content',           // Generic content class
+                                'post',              // Post containers
+                                'article-body'       // Article body
+                            ]
+                        });
                         const art = readability.parse();
                         if (art && art.content && art.content.trim().length > 0) {
                             const a = {

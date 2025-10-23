@@ -109,10 +109,19 @@
       console.log('🎯 [Readability] Initializing Readability instance...');
       const readability = new Readability(doc, {
         debug: true,
-        maxElemsToParse: 0,
-        nbTopCandidates: 5,
-        charThreshold: 500,
-        classesToPreserve: ['markdown-body', 'markdown-content', 'post-content', 'entry-content']
+        maxElemsToParse: 0,  // No limit
+        nbTopCandidates: 5,  // Consider top 5 content candidates
+        charThreshold: 100,  // Lower threshold for better content detection
+        classesToPreserve: [
+          'markdown-body',     // GitHub-style markdown
+          'markdown-content',  // Common markdown class
+          'post-content',      // Blog post content
+          'entry-content',     // WordPress/blog standard
+          'article-content',   // Article containers
+          'content',           // Generic content class
+          'post',              // Post containers
+          'article-body'       // Article body
+        ]
       });
 
       console.log('⚙️ [Readability] Readability instance created, calling parse()...');
