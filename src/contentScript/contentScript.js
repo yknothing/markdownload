@@ -134,12 +134,18 @@ async function extractContentForPopup() {
         console.log('✅ Document clone cleaned, creating Readability instance...');
         const readability = new window.Readability(documentClone, {
             debug: false,
-            maxElemsToParse: 0,
-            nbTopCandidates: 5,
-            charThreshold: 100, // Lower threshold for better detection
+            maxElemsToParse: 0,  // No limit
+            nbTopCandidates: 5,  // Consider top 5 content candidates
+            charThreshold: 100,  // Lower threshold for better content detection
             classesToPreserve: [
-                'markdown-body', 'markdown-content', 'post-content',
-                'entry-content', 'article-content', 'content'
+                'markdown-body',     // GitHub-style markdown
+                'markdown-content',  // Common markdown class
+                'post-content',      // Blog post content
+                'entry-content',     // WordPress/blog standard
+                'article-content',   // Article containers
+                'content',           // Generic content class
+                'post',              // Post containers
+                'article-body'       // Article body
             ]
         });
 
