@@ -108,7 +108,7 @@ describe('Content Script Critical Bug Regression Tests', () => {
    */
   test('ensures consistent variable naming in readability section', () => {
     const contentScriptCode = require('fs').readFileSync(
-      '/Users/whatsup/workspace/markdownload/src/contentScript/contentScript.js', 
+      require('path').join(__dirname, '../../src/contentScript/contentScript.js'),
       'utf8'
     );
 
